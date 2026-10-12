@@ -9,6 +9,8 @@ import { buildTrends, rankPainPoints } from "./trend";
 import { generateBrief } from "./brief";
 import { decideBriefWrite, isFrozen, type BriefAction, type BriefDraft } from "./brief-policy";
 import { assessComparison, mergeCoverage, summarizeStatuses, type Comparison, type Coverage, type SourceStatus } from "./coverage";
+import { coarseReason, makeDiagnostics, type Diagnostic } from "./diagnostics";
+import { SOURCE_LABEL } from "./coverage";
 import { sanitizeError } from "./text";
 import type { Trigger } from "./run-plan";
 import type { ThemeTrend } from "./types";
@@ -67,6 +69,8 @@ export interface RunSummary {
   comparison: Comparison;
   sources: Coverage;
   warnings: string[];
+  /** Structured diagnostics with stable codes (safe messages only). Also stored with the run. */
+  diagnostics: Diagnostic[];
 }
 
 export const DEFAULT_BUDGET_MS = 270_000;
@@ -81,16 +85,18 @@ export const BACKLOG_LOOKBACK_DAYS = 84;
 const DAY = 86_400_000;
 
 const errMsg = (e: unknown) => sanitizeError(e);
+type Diag = ReturnType<typeof makeDiagnostics>;
+const srcName = (s: string) => SOURCE_LABEL[s] ?? s;
 
 function normalize(raw: FetchResult | FetchedPost[]): FetchResult {
   return Array.isArray(raw) ? { posts: raw, requests: 1, failed: 0, errors: [], truncated: false } : raw;
 }
 
 /** Monitoring is best-effort: a failure here is noted but must never mask, replace or cause a pipeline error. */
-function makeObserver(store: Store, warnings: string[]) {
+function makeObserver(store: Store, diag: Diag) {
   const note = (what: string, e: unknown) => {
     console.error(`monitoring: ${what} failed: ${errMsg(e)}`);
-    warnings.push(`monitoring: ${what} failed`);
+    diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "run", message: `Run history could not be written (${what}); the pipeline itself was not affected.` }, `monitoring: ${what} failed`);
   };
   return {
     async start(info: Parameters<Store["startRun"]>[0]) {
@@ -133,7 +139,8 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
   const trigger: Trigger = deps.trigger ?? "scheduled";
   const period = periodFor(deps.now ?? new Date());
   const warnings: string[] = [];
-  const obs = makeObserver(store, warnings);
+  const diag = makeDiagnostics(() => Date.now(), warnings);
+  const obs = makeObserver(store, diag);
 
   const runId = await obs.start({ week_start: period.weekStart, period_start: period.start, period_end: period.end, trigger });
   let fetchRows: SourceFetchRow[] = [];
@@ -169,8 +176,17 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     // 4. keep posts inside the period that match the topic's keywords (topic-major order => deterministic)
     const fetchedPosts: FetchedPost[] = [];
     fetchRows = outcomes.map(({ t, src, r, status, error, ms }) => {
-      if (status === "error") warnings.push(`${src} fetch failed for "${t.name}": ${error}`);
-      else if (status === "partial") warnings.push(`${src} fetch partially failed for "${t.name}": ${error}`);
+      if (status === "error" || status === "partial") {
+        const why = coarseReason(error);
+        const auth = /rejected the API credentials/.test(error ?? "");
+        const limited = why === "Rate limited by the source";
+        diag.add({
+          code: auth ? "SOURCE_AUTH" : limited ? "SOURCE_RATE_LIMITED" : status === "error" ? "SOURCE_FAILED" : "SOURCE_PARTIAL",
+          severity: status === "error" ? "error" : "warning", stage: "collect", source: src,
+          message: `${srcName(src)} ${status === "error" ? "failed" : "was only partly collected"} for "${t.name}": ${auth ? "the API credentials were rejected" : (why ?? "unknown reason").toLowerCase()}.`,
+          detail: { requests: r.requests, failed: r.failed, fetched: r.posts.length },
+        }, `${src} fetch ${status === "error" ? "failed" : "partially failed"} for "${t.name}": ${error}`);
+      }
       if (r.truncated) warnings.push(`${src} results for "${t.name}" hit the page limit; more posts may exist`);
       let accepted = 0;
       for (const p of r.posts) {
@@ -185,6 +201,22 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
         fetched: r.posts.length, accepted, inserted: 0, truncated: r.truncated, error, duration_ms: ms,
       };
     });
+
+    // one diagnostic per source (not per topic) for caps, retries and rate-limit waiting
+    for (const src of sources) {
+      const mine = outcomes.filter((o) => o.src === src);
+      const capped = mine.filter((o) => o.r.truncated).length;
+      if (capped) diag.add({ code: "SOURCE_CAPPED", severity: "info", stage: "collect", source: src, message: `${srcName(src)} results hit the page limit for ${capped} of ${mine.length} topics, so its counts may be understated.`, detail: { topics: mine.length, capped } }, null);
+      const retries = mine.reduce((s, o) => s + (o.r.retries ?? 0), 0);
+      const waitedMs = mine.reduce((s, o) => s + (o.r.waitedMs ?? 0), 0);
+      if (retries > 0 || waitedMs > 0) {
+        diag.add({
+          code: retries > 0 ? "SOURCE_RETRIED" : "SOURCE_THROTTLED", severity: "info", stage: "collect", source: src,
+          message: `${srcName(src)}: ${retries > 0 ? `${retries} ${retries === 1 ? "request was" : "requests were"} retried after transient trouble; ` : ""}waited ${Math.round(waitedMs / 1000)} s in total for the provider's rate limit.`,
+          detail: { retries, waitedMs },
+        }, null);
+      }
+    }
 
     // 5-6. dedupe against stored (source, source_id), then insert
     const existing = await store.getExistingKeys(fetchedPosts);
@@ -211,7 +243,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     let backlogRemaining = unclassified.length - pending;
     const classifyCutoff = t0 + budget - FINALIZE_RESERVE_MS;
     if (unclassified.length && !callModel) {
-      warnings.push("GEMINI not configured: classification skipped");
+      diag.add({ code: "CLASSIFY_NO_MODEL", severity: "error", stage: "classify", message: `Classification was skipped because no Gemini key is configured; ${unclassified.length} posts stay unclassified.`, detail: { waiting: unclassified.length } }, "GEMINI not configured: classification skipped");
     } else if (unclassified.length && callModel) {
       for (const phase of ["current", "earlier"] as const) {
         for (const topic of topics) {
@@ -228,8 +260,9 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
               deadline: classifyCutoff + CLASSIFY_GRACE_MS,
             });
             warnings.push(...out.warnings);
+            if (out.warnings.length) diag.add({ code: "CLASSIFY_WARNING", severity: "warning", stage: "classify", message: `Classification reported ${out.warnings.length} ${out.warnings.length === 1 ? "problem" : "problems"} for "${topic.name}" (details in the server logs).`, detail: { count: out.warnings.length } }, null);
           } catch (e) {
-            warnings.push(`classification aborted for "${topic.name}": ${errMsg(e)}`);
+            diag.add({ code: "CLASSIFY_ABORTED", severity: "error", stage: "classify", message: `Classification stopped for "${topic.name}"; its remaining posts stay unclassified and are retried next run.` }, `classification aborted for "${topic.name}": ${errMsg(e)}`);
           }
         }
       }
@@ -237,8 +270,12 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       const left = await store.getUnclassifiedPosts(backlogFrom, period.end);
       pending = left.filter(inPeriod).length;
       backlogRemaining = left.length - pending;
+      if (pending + backlogRemaining > 0) {
+        diag.add({ code: "CLASSIFY_PENDING", severity: "warning", stage: "classify", message: `${pending} ${pending === 1 ? "post" : "posts"} in this period and ${backlogRemaining} from earlier periods are waiting for classification.`, detail: { pending, backlogRemaining } }, null);
+        if (clock() >= classifyCutoff) diag.add({ code: "RUN_BUDGET", severity: "warning", stage: "run", message: "The run's time budget was reached, so it stopped starting new classification work." }, null);
+      }
     }
-    if (recovered) warnings.push(`recovered ${recovered} unclassified post(s) from earlier periods`);
+    if (recovered) diag.add({ code: "CLASSIFY_RECOVERED", severity: "info", stage: "classify", message: `Recovered ${recovered} unclassified ${recovered === 1 ? "post" : "posts"} from earlier periods.`, detail: { recovered } }, `recovered ${recovered} unclassified post(s) from earlier periods`);
 
     // 8. reconcile earlier reported periods: late-classified posts are folded into their own period's counts.
     //    Counts only ever grow (growOnly), come from stored classifications as they were made (no re-folding under a
@@ -299,6 +336,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       const { narrative, usedFallback } = await generateBrief(
         trends, { pending, warnings }, callModel, comparison.state, t0 + budget - NARRATIVE_MARGIN_MS,
       );
+      if (usedFallback) diag.add({ code: "SUMMARY_FALLBACK", severity: "warning", stage: "summary", message: "The AI summary was unavailable, so the summary was written from a template. The numbers are unaffected." }, null);
       const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison }, pendingCount: pending, usedFallback };
       const decision = decideBriefWrite(savedBefore, draft);
       action = decision.action;
@@ -313,6 +351,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     }
     const saved = await store.getBrief(period.weekStart);
     if (!saved) throw new Error("saved report not found after writing it");
+    diag.add({ code: "REPORT_SAVED", severity: "info", stage: "persist", message: `Report ${period.weekStart}: ${action === "create" ? "created" : action === "replace" ? "replaced with a newer version" : action === "unchanged" ? "unchanged" : "kept as already saved"} (version ${saved.version}).`, detail: { action, version: saved.version, pending } }, null);
 
     // 12. email: scheduled runs only, at most once per reporting week, built from the SAVED version
     let email: EmailOutcome = "not_attempted";
@@ -324,14 +363,14 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
         points: saved.points,
         comparison: saved.coverage.comparison,
         coverage: saved.coverage.sources,
-      }, warnings, deps.sleep);
+      }, diag, deps.sleep);
     }
 
     const problems = outcomes.some((o) => o.status !== "ok") || pending > 0 || backlogRemaining > 0 || email === "failed" || email === "unconfirmed";
     const status: RunStatus = problems ? "partial" : "succeeded";
     await obs.finish(runId, {
       status, fetched_total: fetchedPosts.length, new_posts: fresh.length, classified_ok: classified,
-      classification_failed: pending + backlogRemaining, used_fallback: saved.usedFallback, email_status: email, warnings,
+      classification_failed: pending + backlogRemaining, used_fallback: saved.usedFallback, email_status: email, warnings, diagnostics: diag.items,
     });
 
     return {
@@ -340,12 +379,13 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       topics: topics.length, fetched: fetchedPosts.length, newPosts: fresh.length, classified, pending, backlogRemaining,
       recoveredFromEarlierPeriods: recovered, trends: trends.length, usedFallbackNarrative: saved.usedFallback,
       brief: { action, version: saved.version, reason },
-      email, comparison: saved.coverage.comparison, sources: coverage, warnings,
+      email, comparison: saved.coverage.comparison, sources: coverage, warnings, diagnostics: diag.items,
     };
   } catch (e) {
     // Record the failure, then surface the ORIGINAL error. Recording problems are only noted.
     await flushRows();
-    await obs.finish(runId, { status: "failed", warnings, error: errMsg(e) });
+    diag.add({ code: "RUN_FAILED", severity: "error", stage: "run", message: "The run failed before it could complete. See the server logs for the cause." }, null);
+    await obs.finish(runId, { status: "failed", warnings, diagnostics: diag.items, error: errMsg(e) });
     throw e;
   }
 }
@@ -373,24 +413,24 @@ async function deliverOnce(
   store: Store,
   send: NonNullable<Deps["sendEmail"]>,
   args: EmailArgs,
-  warnings: string[],
+  diag: Diag,
   sleep: (ms: number) => Promise<void> = realSleep,
 ): Promise<EmailOutcome> {
   let claim;
   try {
     claim = await store.claimEmail(args.weekStart);
   } catch (e) {
-    warnings.push(`email not sent: could not check delivery state (${errMsg(e)})`); // fail closed: never send unguarded
+    diag.add({ code: "EMAIL_STATE_CHECK_FAILED", severity: "error", stage: "email", message: "Email not sent: the delivery state could not be checked, so nothing was sent." }, `email not sent: could not check delivery state (${errMsg(e)})`); // fail closed: never send unguarded
     return "failed";
   }
-  if (claim === "already_sent") return "already_sent";
+  if (claim === "already_sent") { diag.add({ code: "EMAIL_ALREADY_SENT", severity: "info", stage: "email", message: "This week's report was already emailed, so nothing was sent again." }, null); return "already_sent"; }
   if (claim === "in_progress") return "in_progress";
   if (claim === "unconfirmed") {
-    warnings.push("email not sent: an earlier delivery attempt for this week is unconfirmed and is too old to retry safely; check the inbox before resending");
+    diag.add({ code: "EMAIL_UNCONFIRMED", severity: "error", stage: "email", message: "Email not sent: an earlier delivery attempt for this week is unconfirmed and too old to retry safely. Check the inbox before resending." }, "email not sent: an earlier delivery attempt for this week is unconfirmed and is too old to retry safely; check the inbox before resending");
     return "unconfirmed";
   }
   if (claim === "no_brief") {
-    warnings.push("email not sent: brief row missing");
+    diag.add({ code: "EMAIL_BRIEF_MISSING", severity: "error", stage: "email", message: "Email not sent: the saved report could not be found." }, "email not sent: brief row missing");
     return "failed";
   }
 
@@ -403,26 +443,27 @@ async function deliverOnce(
       const ambiguous = e instanceof EmailSendError && !e.definite;
       if (ambiguous && attempt < SEND_BACKOFF_MS.length) { await sleep(SEND_BACKOFF_MS[attempt]); continue; }
       if (ambiguous) {
-        warnings.push(`email outcome unknown after ${attempt + 1} attempts (${errMsg(e)}); claim kept so it is not resent after the provider forgets the key`);
+        diag.add({ code: "EMAIL_OUTCOME_UNKNOWN", severity: "error", stage: "email", message: `The email provider did not confirm the send after ${attempt + 1} attempts. The claim is kept so it is not resent after the provider forgets the key.`, detail: { attempts: attempt + 1 } }, `email outcome unknown after ${attempt + 1} attempts (${errMsg(e)}); claim kept so it is not resent after the provider forgets the key`);
         return "unconfirmed";
       }
-      warnings.push(`email failed: ${errMsg(e)}`);
-      try { await store.markEmailFailed(args.weekStart, errMsg(e)); } catch (m) { warnings.push(`monitoring: markEmailFailed failed (${errMsg(m)})`); }
+      diag.add({ code: "EMAIL_FAILED", severity: "warning", stage: "email", message: "The email provider rejected the message. It will be retried by the next scheduled run." }, `email failed: ${errMsg(e)}`);
+      try { await store.markEmailFailed(args.weekStart, errMsg(e)); } catch (m) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "email", message: "The failed-email state could not be recorded." }, `monitoring: markEmailFailed failed (${errMsg(m)})`); }
       return "failed";
     }
   }
   if (result === "skipped") {
-    try { await store.releaseEmailClaim(args.weekStart); } catch (m) { warnings.push(`monitoring: releaseEmailClaim failed (${errMsg(m)})`); }
+    try { await store.releaseEmailClaim(args.weekStart); } catch (m) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "email", message: "The email claim could not be released." }, `monitoring: releaseEmailClaim failed (${errMsg(m)})`); }
     return "skipped";
   }
   const messageId = typeof result === "object" ? (result.messageId ?? null) : null;
   for (let attempt = 0; ; attempt++) {
     try {
       await store.markEmailSent(args.weekStart, args.version, messageId);
+      diag.add({ code: "EMAIL_SUBMITTED", severity: "info", stage: "email", message: `The provider accepted the email for report version ${args.version}. Inbox delivery is not observable here.`, detail: { version: args.version } }, null);
       return "sent";
     } catch (m) {
       if (attempt < MARK_BACKOFF_MS.length) { await sleep(MARK_BACKOFF_MS[attempt]); continue; }
-      warnings.push(`email was accepted but could not be recorded as sent after ${attempt + 1} attempts (${errMsg(m)}); claim kept (not resent automatically once the provider's key window passes)`);
+      diag.add({ code: "EMAIL_MARK_SENT_FAILED", severity: "warning", stage: "email", message: `The email was accepted but could not be recorded as sent after ${attempt + 1} attempts. The claim is kept; it is not resent automatically once the provider's key window passes.`, detail: { attempts: attempt + 1 } }, `email was accepted but could not be recorded as sent after ${attempt + 1} attempts (${errMsg(m)}); claim kept (not resent automatically once the provider's key window passes)`);
       return "sent";
     }
   }

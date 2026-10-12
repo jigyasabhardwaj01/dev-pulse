@@ -121,17 +121,29 @@ describe("source adapters (mocked fetch)", () => {
       if (n === 1) return json({}, 500);
       return json({ hits: [{ objectID: "9", title: "Why code review fails", created_at_i: 1790000000 }, { objectID: "10", title: "unrelated", created_at_i: 1790000000 }] });
     });
-    const out = await makeHnFetcher(f)(TOPIC, window);
+    const out = await makeHnFetcher(f, async () => {})(TOPIC, window);
     expect(out.posts.every((p) => p.source === "hn" && p.is_answered === null)).toBe(true);
     expect(out.posts.map((p) => p.source_id)).not.toContain("10");
-    expect(out.failed).toBe(1); // the failed request is reported, not hidden by the ones that worked
+    expect(out.failed).toBe(0); // a transient 500 is retried and recovered...
+    expect(out.retries).toBe(1); // ...and the retry is recorded, not hidden
     expect(f.mock.calls.some(([u]) => String(u).includes("tags=comment"))).toBe(true);
   });
 
-  it("HN: reports total failure when every request fails", async () => {
-    const r = await makeHnFetcher(async () => json({}, 503))(TOPIC, window);
+  it("HN: a permanent failure (400) is reported, not retried, and not hidden by the requests that worked", async () => {
+    let n = 0;
+    const f = vi.fn(async () => (++n === 1 ? json({}, 400) : json({ hits: [{ objectID: "9", title: "code review", created_at_i: 1790000000 }] })));
+    const out = await makeHnFetcher(f, async () => {})(TOPIC, window);
+    expect(out.failed).toBe(1);
+    expect(out.retries).toBeUndefined();
+    expect(f.mock.calls.length).toBe(out.requests); // no extra attempt for a permanent error
+  });
+
+  it("HN: reports total failure when every request keeps failing after its bounded retries", async () => {
+    const f = vi.fn(async () => json({}, 503));
+    const r = await makeHnFetcher(f, async () => {})(TOPIC, window);
     expect(r.posts).toEqual([]);
     expect(r.failed).toBe(r.requests);
+    expect(f.mock.calls.length).toBe(r.requests * 3); // 1 try + 2 retries each, then give up
   });
 
   it("SO: carries is_answered through", async () => {

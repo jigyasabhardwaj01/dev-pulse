@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Classification, StoredPost, ThemeCount, ThemeTrend, Topic } from "./types";
 import type { Comparison, Coverage } from "./coverage";
 import type { BriefDraft, BriefRecord } from "./brief-policy";
+import type { Diagnostic } from "./diagnostics";
 import { sanitizeError } from "./text";
 
 export type RunStatus = "running" | "succeeded" | "partial" | "failed";
@@ -18,6 +19,8 @@ export interface RunFinish {
   used_fallback?: boolean;
   email_status?: EmailOutcome;
   warnings?: string[];
+  /** Structured diagnostics. When present they are what is stored (in the same jsonb column); plain warnings remain the fallback. */
+  diagnostics?: Diagnostic[];
   error?: string | null;
 }
 export interface SourceFetchRow {
@@ -73,6 +76,8 @@ export interface Store {
   startRun(info: RunStart): Promise<string>;
   recordSourceFetches(runId: string, rows: SourceFetchRow[]): Promise<void>;
   finishRun(runId: string, patch: RunFinish): Promise<void>;
+  /** Is another run for this reporting period still in progress (started recently and not finished)? Guards against a duplicated or overlapping trigger. */
+  hasActiveRun(weekStart: string, withinMs: number): Promise<boolean>;
 
   // email-once guard (atomic per reporting week)
   claimEmail(weekStart: string): Promise<EmailClaim>;
@@ -286,9 +291,17 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
       ok(await db.from("source_fetches").insert(rows.map((r) => ({ ...r, run_id: runId }))), "record source fetches");
     },
 
+    async hasActiveRun(weekStart, withinMs) {
+      const since = new Date(Date.now() - withinMs).toISOString();
+      const rows = ok(await db.from("pipeline_runs").select("id").eq("week_start", weekStart).eq("status", "running").gte("started_at", since).limit(1), "active run check") as unknown[];
+      return rows.length > 0;
+    },
+
     async finishRun(runId, patch) {
+      const { diagnostics, warnings, ...rest } = patch;
       ok(await db.from("pipeline_runs").update({
-        ...patch,
+        ...rest,
+        warnings: diagnostics && diagnostics.length ? diagnostics : (warnings ?? []),
         error: patch.error ? sanitizeError(patch.error, 500) : null,
         finished_at: new Date().toISOString(),
       }).eq("id", runId), "finish run");

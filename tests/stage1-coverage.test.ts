@@ -104,7 +104,14 @@ describe("secret-safe error text", () => {
     expect(s).toContain("api.stackexchange.com");
   });
   it("truncates long messages", () => {
-    expect(sanitizeError("x".repeat(1000), 100).length).toBe(100);
+    expect(sanitizeError("word ".repeat(300), 100).length).toBe(100);
+    expect(sanitizeError("x".repeat(1000), 100)).toBe("[redacted]"); // one long opaque string is a token, not text
+    // IP addresses, JWT-shaped keys and long opaque tokens never survive, whatever the surrounding text
+    const t = sanitizeError(new Error("connect ECONNREFUSED 10.0.0.1:5432 then 2001 at 192.168.1.20 with eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZSJ9.sig and abcdefghijklmnopqrstuvwxyz0123456789ABCDEF"));
+    for (const bad of ["10.0.0.1", "5432", "192.168.1.20", "eyJhbGci", "abcdefghijklmnopqrstuvwxyz0123456789"]) expect(t).not.toContain(bad);
+    expect(t).toContain("[address]");
+    expect(sanitizeError("HTTP 429 for www.reddit.com")).toBe("HTTP 429 for www.reddit.com"); // service host names are kept
+    expect(sanitizeError("fetched 2026-10-09 in 12.5s")).toBe("fetched 2026-10-09 in 12.5s"); // numbers that are not addresses are untouched
   });
 });
 

@@ -26,7 +26,7 @@ export class MemoryStore implements Store {
   briefs = new Map<string, StoredBrief>();
   reports = new Map<string, ReportPeriodRow>();
   emails = new Map<string, EmailState>();
-  runs: (RunStart & { id: string; finish?: RunFinish })[] = [];
+  runs: (RunStart & { id: string; startedAt?: number; finish?: RunFinish })[] = [];
   sourceFetches: (SourceFetchRow & { run_id: string })[] = [];
   fail: Partial<Record<keyof Store, Error>> = {};
   saves: number[] = []; // size of each saveClassifications call, in order
@@ -95,7 +95,8 @@ export class MemoryStore implements Store {
       .sort((a, b) => b.period_start.localeCompare(a.period_start));
   }
 
-  async startRun(info: RunStart) { this.boom("startRun"); const id = `run-${this.runs.length + 1}`; this.runs.push({ ...info, id }); return id; }
+  async startRun(info: RunStart) { this.boom("startRun"); const id = `run-${this.runs.length + 1}`; this.runs.push({ ...info, id, startedAt: Date.now() }); return id; }
+  async hasActiveRun(week: string, withinMs: number) { this.boom("hasActiveRun"); return this.runs.some((r) => r.week_start === week && !r.finish && Date.now() - (r.startedAt ?? 0) <= withinMs); }
   async recordSourceFetches(runId: string, rows: SourceFetchRow[]) { this.boom("recordSourceFetches"); this.sourceFetches.push(...rows.map((r) => ({ ...r, run_id: runId }))); }
   async finishRun(runId: string, patch: RunFinish) { this.boom("finishRun"); this.runs.find((r) => r.id === runId)!.finish = patch; }
 

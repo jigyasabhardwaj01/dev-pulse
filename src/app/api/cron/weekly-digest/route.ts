@@ -8,7 +8,9 @@ import { makeRedditFetcher } from "@/lib/sources/reddit";
 import { makeGithubFetcher } from "@/lib/sources/github";
 import { geminiFromEnv } from "@/lib/gemini";
 import { sendBriefEmail } from "@/lib/email";
-import { planRun } from "@/lib/run-plan";
+import { ACTIVE_RUN_WINDOW_MS, planRun } from "@/lib/run-plan";
+import { periodFor } from "@/lib/week";
+import { sanitizeError } from "@/lib/text";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -39,13 +41,34 @@ export async function GET(req: Request) {
     console.error("gemini unavailable:", (e as Error).message);
   }
 
+  let store: ReturnType<typeof makeSupabaseStore>;
+  try {
+    store = makeSupabaseStore();
+  } catch (e) {
+    console.error("store unavailable:", sanitizeError(e));
+    return NextResponse.json({ ok: false, error: sanitizeError(e) }, { status: 500 });
+  }
+  // A duplicated or overlapping trigger (Vercel may deliver a cron more than once) must not repeat a run that is still going.
+  // Fail open if the check itself cannot be made: the report, aggregate and email guards still prevent duplicate outcomes.
+  const weekStart = periodFor(plan.now).weekStart;
+  try {
+    if (await store.hasActiveRun(weekStart, ACTIVE_RUN_WINDOW_MS)) {
+      console.log(JSON.stringify({ event: "weekly_digest", outcome: "skipped_run_in_progress", weekStart }));
+      return NextResponse.json({ ok: true, skipped: "run_in_progress", weekStart }, { status: 202 });
+    }
+  } catch (e) {
+    console.error("active-run check failed (continuing):", sanitizeError(e));
+  }
+
+  const started = Date.now();
   try {
     const summary = await runDigest({
-      store: makeSupabaseStore(),
+      store,
       fetchers: {
         hn: makeHnFetcher(),
         stackoverflow: makeSoFetcher(fetch, process.env.STACKEXCHANGE_KEY),
-        reddit: makeRedditFetcher(),
+        // Optional app-only OAuth: without these two variables Reddit is read through its public (rate-limited) feed.
+        reddit: makeRedditFetcher(fetch, undefined, { clientId: process.env.REDDIT_CLIENT_ID, clientSecret: process.env.REDDIT_CLIENT_SECRET }),
         github: makeGithubFetcher(fetch, process.env.GITHUB_TOKEN),
       },
       callModel,
@@ -53,9 +76,17 @@ export async function GET(req: Request) {
       trigger: plan.trigger,
       now: plan.now,
     });
+    // One structured line per run for the Vercel logs: counts and outcomes only, never credentials or raw errors.
+    console.log(JSON.stringify({
+      event: "weekly_digest", outcome: summary.status, trigger: summary.trigger, weekStart: summary.weekStart, durationMs: Date.now() - started,
+      fetched: summary.fetched, newPosts: summary.newPosts, classified: summary.classified, pending: summary.pending, backlogRemaining: summary.backlogRemaining,
+      email: summary.email, brief: summary.brief, sources: Object.fromEntries(Object.entries(summary.sources).map(([k, v]) => [k, v?.status])),
+      diagnostics: summary.diagnostics.filter((d) => d.severity !== "info").map((d) => d.code),
+    }));
     return NextResponse.json({ ok: true, ...summary });
   } catch (e) {
-    console.error("weekly digest failed:", e);
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    console.error("weekly digest failed:", sanitizeError(e));
+    console.log(JSON.stringify({ event: "weekly_digest", outcome: "failed", weekStart, durationMs: Date.now() - started }));
+    return NextResponse.json({ ok: false, error: sanitizeError(e) }, { status: 500 });
   }
 }

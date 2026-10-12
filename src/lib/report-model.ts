@@ -1,5 +1,6 @@
 import type { ThemeTrend } from "./types";
 import type { Comparison, ComparisonState, Coverage, SourceStatus } from "./coverage";
+import { coarseReason, parseDiagnostics, type Diagnostic } from "./diagnostics";
 import { formatLegacyWeek, formatPeriod, summarizeReport, shortWeek, type ReportStats } from "./view";
 
 /** What a `briefs` row looks like. Columns added by later migrations may be absent, so everything optional is optional. */
@@ -101,13 +102,23 @@ export interface ReportListItem {
   version: number | null;
   sourcesOk: number;
   sourcesTotal: number;
+  /** Week-over-week counts; null when trends are withheld for that report (never zero). */
+  emerging: number | null;
+  rising: number | null;
+  declining: number | null;
+  /** The saved summary, for previews. */
+  narrative: string;
 }
 
 export function toListItem(brief: BriefDbRow, period: PeriodDbRow | null): ReportListItem {
   const v = buildReportView(brief, period, []);
+  const shown = displayPoints(v);
+  const comparable = shown.some((p) => p.direction !== "unavailable");
+  const n = (d: string) => (comparable ? shown.filter((p) => p.direction === d).length : null);
   return {
     weekStart: v.weekStart, kind: v.kind, periodLabel: v.periodLabel, mentions: v.stats.mentions, painPoints: v.stats.painPoints,
     reliability: v.reliability, delivery: v.delivery.status, version: v.version, sourcesOk: v.stats.sourcesOk, sourcesTotal: v.stats.sourcesTotal,
+    emerging: n("new"), rising: n("up"), declining: n("down"), narrative: v.narrative,
   };
 }
 
@@ -142,44 +153,59 @@ export interface RunDbRow {
   id: string; week_start: string; trigger: string; status: string; started_at: string; finished_at: string | null;
   email_status: string | null; used_fallback: boolean | null; error: string | null;
   fetched_total?: number | null; new_posts?: number | null; classified_ok?: number | null; classification_failed?: number | null;
+  /** Pipeline warnings (sanitized strings). Only their NUMBER is ever shown on the public page. */
+  warnings?: unknown;
 }
 export interface FetchDbRow {
   run_id: string; source: string; status: SourceStatus; fetched: number; accepted: number; inserted: number; truncated: boolean; error: string | null;
+  /** Request-level telemetry, recorded per (run, topic, source). Optional so older rows and tests still work. */
+  requests?: number | null; failed_requests?: number | null; duration_ms?: number | null;
 }
 export interface RunView {
   id: string; weekStart: string; periodLabel: string; trigger: string; status: string; startedAt: string; durationSec: number | null;
   emailStatus: string | null; usedFallback: boolean; problem: string | null; stuck: boolean;
   classified: number | null; unclassified: number | null; newPosts: number | null;
-  sources: { source: string; status: SourceStatus; fetched: number; accepted: number; inserted: number; truncated: boolean; reason: string | null }[];
+  sources: RunSourceView[];
+  /** When the run recorded its end; null for a run that is running or was killed. */
+  finishedAt: string | null;
+  fetchedTotal: number | null;
+  /** Warnings plus diagnostics recorded for the run (the raw text of legacy warnings is deliberately never exposed). */
+  warningCount: number | null;
+  /** Structured diagnostics: stable code, severity, stage, safe message. Empty for runs recorded before they existed. */
+  diagnostics: Diagnostic[];
 }
 
-/**
- * The public Pipeline page must not show raw error text (it can carry host names, constraint or table names).
- * Raw errors are reduced here to one of a few fixed phrases; the detail stays in the database and Vercel logs.
- */
-export function coarseReason(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const t = raw.toLowerCase();
-  if (/\b429\b|rate.?limit|too many requests/.test(t)) return "Rate limited by the source";
-  if (/time(d)? ?out|abort|deadline/.test(t)) return "Timed out";
-  if (/\b40[13]\b|forbidden|unauthori[sz]ed|blocked/.test(t)) return "Access refused by the source";
-  if (/\b5\d\d\b|unavailable|bad gateway/.test(t)) return "Source service error";
-  if (/fetch failed|network|enotfound|econn|dns/.test(t)) return "Network problem";
-  return "Source did not return usable data";
+/** One source in one run, summed over its per-topic fetches. `status` is the worst status across topics; the counts say what really happened. */
+export interface RunSourceView {
+  source: string; status: SourceStatus; fetched: number; accepted: number; inserted: number; truncated: boolean; reason: string | null;
+  /** Per-topic outcomes: how many topic fetches were ok, partly failed, or failed outright. */
+  topics: { total: number; ok: number; partial: number; error: number };
+  /** Requests made and failed, summed over topics. `known` is false when no row recorded request counts. */
+  requests: number; failedRequests: number; requestsKnown: boolean;
+  /** Longest single topic fetch, in milliseconds, or null when not recorded. */
+  maxDurationMs: number | null;
 }
+
+export { coarseReason };
 
 const RANK: Record<SourceStatus, number> = { ok: 0, partial: 1, error: 2 };
 /** A function can run at most 300 s; a run still "running" long after that was killed. */
 export const STUCK_AFTER_MS = 10 * 60_000;
 
 export function summarizeRun(run: RunDbRow, fetches: FetchDbRow[], now: Date = new Date()): RunView {
-  const per = new Map<string, RunView["sources"][number]>();
+  const per = new Map<string, RunSourceView>();
   for (const f of fetches.filter((x) => x.run_id === run.id)) {
-    const cur = per.get(f.source) ?? { source: f.source, status: "ok" as SourceStatus, fetched: 0, accepted: 0, inserted: 0, truncated: false, reason: null as string | null };
+    const cur = per.get(f.source) ?? {
+      source: f.source, status: "ok" as SourceStatus, fetched: 0, accepted: 0, inserted: 0, truncated: false, reason: null as string | null,
+      topics: { total: 0, ok: 0, partial: 0, error: 0 }, requests: 0, failedRequests: 0, requestsKnown: false, maxDurationMs: null as number | null,
+    };
     cur.status = RANK[f.status] > RANK[cur.status] ? f.status : cur.status;
     cur.fetched += f.fetched; cur.accepted += f.accepted; cur.inserted += f.inserted;
     cur.truncated = cur.truncated || f.truncated;
     cur.reason = cur.reason ?? coarseReason(f.error);
+    cur.topics.total += 1; cur.topics[f.status === "ok" ? "ok" : f.status === "partial" ? "partial" : "error"] += 1;
+    if (typeof f.requests === "number" && f.requests > 0) { cur.requestsKnown = true; cur.requests += f.requests; cur.failedRequests += Math.max(0, f.failed_requests ?? 0); }
+    if (typeof f.duration_ms === "number") cur.maxDurationMs = Math.max(cur.maxDurationMs ?? 0, f.duration_ms);
     per.set(f.source, cur);
   }
   const started = new Date(run.started_at).getTime();
@@ -190,6 +216,8 @@ export function summarizeRun(run: RunDbRow, fetches: FetchDbRow[], now: Date = n
     emailStatus: run.email_status, usedFallback: Boolean(run.used_fallback), problem: run.error ? "The run reported a problem. See the server logs for details." : null,
     stuck: run.status === "running" && now.getTime() - started > STUCK_AFTER_MS,
     classified: run.classified_ok ?? null, unclassified: run.classification_failed ?? null, newPosts: run.new_posts ?? null,
+    finishedAt: run.finished_at, fetchedTotal: run.fetched_total ?? null,
+    warningCount: Array.isArray(run.warnings) ? run.warnings.length : null, diagnostics: parseDiagnostics(run.warnings).items,
     sources: [...per.values()].sort((a, b) => a.source.localeCompare(b.source)),
   };
 }

@@ -13,9 +13,9 @@ Once a week it collects developer conversations (Hacker News, Stack Overflow, Re
 
 `src/lib/week.ts` `periodFor`: seven complete IST days, Friday 00:00:00.000 IST to Thursday 23:59:59.999 IST (end exclusive), ending at the most recent Friday 00:00 IST at or before the run. Example: a run on Fri 2026-10-09 09:00 IST covers 2026-10-01T18:30Z to 2026-10-08T18:30Z, key `2026-10-02`; the previous period starts 2026-09-24T18:30Z, key `2026-09-25`. Checked over 3 years of run times: no gaps, no overlaps, every key a Friday.
 
-**Weekly cron is currently PAUSED** (`vercel.json` has `"crons": []`, since 2026-10-12, pending the first verified delivery). To resume, restore `{ "crons": [{ "path": "/api/cron/weekly-digest", "schedule": "30 3 * * 5" }] }` and redeploy. The route itself stays available; without the cron, nothing runs it unless someone calls it with the bearer token.
+**The weekly cron is ACTIVE.** `vercel.json` registers exactly one entry, `GET /api/cron/weekly-digest` at `30 3 * * 5` (Fridays 03:30 UTC = 09:00 IST, after the reporting window closes at Friday 00:00 IST). Vercel cron runs in UTC, sends `Authorization: Bearer $CRON_SECRET` itself, and runs only on the production deployment. It was paused between 2026-10-12 and the activation of this release; the pause is documented in git history.
 
-Schedule when active: `vercel.json` cron `30 3 * * 5`. Vercel Hobby fires cron anywhere within the hour, so a run lands between 08:30 and 09:29 IST; delivery is best-effort, can be duplicated, and is never retried.
+Hobby cron fires anywhere within the scheduled hour. Vercel Hobby fires cron anywhere within the hour, so a run lands between 08:30 and 09:29 IST; delivery is best-effort, can be duplicated, and is never retried.
 
 ### `asOf` backfills (`src/lib/run-plan.ts`)
 `?asOf=YYYY-MM-DD` is an IST date. Rejected with HTTP 400: wrong format, impossible dates (Feb 30, non-leap Feb 29, month 13), dates after today (IST), dates before 2020-01-01, and a repeated parameter. A valid asOf is a **backfill**: it never emails and never touches delivery state.
@@ -74,7 +74,7 @@ The weekly run happens 7 days after any stuck claim, which is past the key windo
 2. `migrations_003_reliability.sql`: email columns on `briefs`; `pipeline_runs`, `source_fetches`, `report_periods`,
 3. `migrations_004_report_integrity.sql`: report-version columns; a trigger that makes a delivered/being-delivered brief immutable (content, delivery record, and it cannot be deleted) and `sent` terminal; consistency constraints scoped to their own tables.
 
-Migrations 003 and 004 were applied to the live project on 2026-10-12 after a rolled-back dry run on the real database and a logical backup of all four tables. Verified afterwards: 7 tables with RLS, the trigger and four constraints present, every original row value unchanged, and 25-way concurrent create / compare-and-set / email-claim races each had exactly one winner (`scripts/verify-claim-concurrency.mjs`).
+Migrations 003, 004 and 005 (005 pins the trigger function's search_path; additive) were applied to the live project on 2026-10-12 after a rolled-back dry run on the real database and a logical backup of all four tables. Verified afterwards: 7 tables with RLS, the trigger and four constraints present, every original row value unchanged, and 25-way concurrent create / compare-and-set / email-claim races each had exactly one winner (`scripts/verify-claim-concurrency.mjs`).
 
 ## 8. Frontend (read-only)
 
@@ -98,3 +98,22 @@ Migrations 003 and 004 were applied to the live project on 2026-10-12 after a ro
 - Posts older than the 84-day lookback that were never classified are not retried.
 - A function killed mid-run leaves its run row as `running` (the Pipeline page flags it).
 - A permanently malformed post is retried every run until it leaves the lookback.
+
+## 12. Sources, retries and Reddit (measured behaviour)
+
+- **Retries (all sources).** `getJson` retries only transient trouble: timeouts, network errors, HTTP 408/425/429/5xx, and a 403 that advertises when to return (GitHub's secondary limit). At most 2 retries (500 ms, 1 s backoff); a `Retry-After` is honoured when it is 8 s or less, otherwise the failure is reported at once. 400/401/404, a plain 403 and malformed bodies are never retried. Retries and rate-limit waiting are recorded per source (diagnostic codes `SOURCE_RETRIED` / `SOURCE_THROTTLED`).
+- **Reddit (root cause, found 2026-10-12).** Reddit's public `.json` search is refused with a 403 block page from server networks. The public Atom (`.rss`) search works but its allowance is about **one request per minute** (`x-ratelimit-remaining: 0`, `x-ratelimit-reset` 18-58 s). The old code made 9 requests (one per subreddit per topic) 6 s apart, so most were 429s (7 of 9 failed, 0 posts). Now: **one multi-subreddit request per topic** (`r/programming+ExperiencedDevs+devops`), requests serialised, Reddit's own reset header honoured, a bounded 125 s wait budget so Reddit cannot starve the run (topics beyond the budget fail visibly as rate limited, never as zero posts). Measured live: 3 requests, 0 failed, 32 posts, about 105 s wall-clock (before: 9 requests, 7 failed, 0 posts). The public feed returns at most 25 entries per request, so a full page is reported as capped.
+- **Reddit OAuth (optional, not configured).** With `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` set, the app-only authenticated API is used instead (100 requests/minute, 100 results). Code and tests exist; it has **not** been verified against Reddit because no credentials exist. Rejected credentials are reported as `SOURCE_AUTH` and are never retried.
+- **Coverage honesty.** Every adapter fetches one page per query (HN 40, Stack Overflow 30, GitHub 30, Reddit 25/100) and reports a cap from the provider's own signal (`nbHits`, `has_more`, `total_count`). A capped source is a sample of the newest results and is shown as such.
+
+## 13. Structured diagnostics
+
+Each run stores diagnostics (stable `code`, `severity`, `stage`, a safe message written by us, `at`, optional `remedy` and numeric `detail`) in the existing `pipeline_runs.warnings` jsonb column; older runs hold plain strings and are shown only as a count. Raw error text never reaches a diagnostic message or the public page. Codes: `SOURCE_FAILED`, `SOURCE_PARTIAL`, `SOURCE_RATE_LIMITED`, `SOURCE_AUTH`, `SOURCE_CAPPED`, `SOURCE_RETRIED`, `SOURCE_THROTTLED`, `CLASSIFY_NO_MODEL`, `CLASSIFY_WARNING`, `CLASSIFY_ABORTED`, `CLASSIFY_PENDING`, `CLASSIFY_RECOVERED`, `SUMMARY_FALLBACK`, `REPORT_SAVED`, `EMAIL_SUBMITTED`, `EMAIL_ALREADY_SENT`, `EMAIL_FAILED`, `EMAIL_OUTCOME_UNKNOWN`, `EMAIL_UNCONFIRMED`, `EMAIL_STATE_CHECK_FAILED`, `EMAIL_BRIEF_MISSING`, `EMAIL_MARK_SENT_FAILED`, `RUN_BUDGET`, `RUN_FAILED`, `MONITORING_FAILED`. `/status` derives its stage health from these (for example the Save stage is verified only by `REPORT_SAVED`).
+
+## 14. Cron route behaviour
+
+`GET /api/cron/weekly-digest`: 401 without the exact bearer secret (constant-time, fails closed); 400 for a bad `asOf`; **202** `{skipped:"run_in_progress"}` if a run for the same period started in the last 6 minutes and has not finished; 200 with the run's own status (`succeeded` or `partial`) otherwise; 500 with a sanitized message on failure. One structured log line per run (counts and outcomes only). Limit: two requests that arrive in the same instant can both pass the in-progress check (there is no database lock); the outcome is still one report version and one email because the report write is compare-and-set and the email claim is a single conditional UPDATE.
+
+## 15. Environment variables (names only; values live in Vercel's protected settings)
+
+Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side only), `GEMINI_API_KEY`, `GEMINI_MODEL` (a Flash model id), `RESEND_API_KEY`, `DIGEST_TO_EMAIL` (single recipient), `APP_URL` (dashboard link in the email), `CRON_SECRET` (cron authentication). Optional: `STACKEXCHANGE_KEY`, `GITHUB_TOKEN`, `REDDIT_USER_AGENT`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`. The Supabase tables have row-level security enabled with no policies, so the public anon/publishable key can read and write nothing (verified: every table returns an empty result and writes are rejected).

@@ -1,37 +1,35 @@
 import type { Metadata, Viewport } from "next";
-import Link from "next/link";
-import NavLinks from "@/components/NavLinks";
+import MobileBar from "@/components/MobileBar";
+import Sidebar from "@/components/Sidebar";
+import { THEME_BOOT, ThemeSync } from "@/components/ThemeToggle";
+import TopBar from "@/components/TopBar";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "JARVIS", template: "%s · JARVIS" },
   description: "A weekly read on what developers are struggling with, how it is changing, and where the evidence comes from.",
 };
-export const viewport: Viewport = { width: "device-width", initialScale: 1, colorScheme: "light dark" };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, colorScheme: "dark light", themeColor: "#07040b" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} /></head>
       <body>
+        <ThemeSync />
         <a className="skip" href="#main">Skip to content</a>
-        <header className="topbar">
-          <div className="topbar-inner">
-            <Link href="/" className="brand" aria-label="JARVIS home">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 12h4l3-8 4 16 3-8h6" />
-              </svg>
-              JARVIS
-            </Link>
-            <NavLinks />
+        <div className="app">
+          <Sidebar />
+          <div className="main-col">
+            <MobileBar />
+            <TopBar />
+            <main id="main" className="page">{children}</main>
+            <footer className="footer">
+              <p>Sources: Hacker News, Stack Overflow, Reddit and GitHub Issues. Themes are assigned by Gemini Flash from a fixed list per topic.</p>
+              <p>A reporting week is the seven complete days from Friday 00:00 to Thursday 23:59 IST. Trends are shown only when source coverage matches the previous week.</p>
+            </footer>
           </div>
-        </header>
-        <main id="main" className="container">{children}</main>
-        <footer className="footer">
-          <div className="footer-inner">
-            <p>Sources: Hacker News, Stack Overflow, Reddit and GitHub Issues. Themes are assigned by Gemini Flash from a fixed list per topic.</p>
-            <p>A reporting week is the seven complete days from Friday 00:00 to Thursday 23:59 IST. Trends are shown only when source coverage matches the previous week.</p>
-          </div>
-        </footer>
+        </div>
       </body>
     </html>
   );

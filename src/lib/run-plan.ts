@@ -14,6 +14,9 @@ export interface RunPlanError {
 
 const IST_OFFSET_MS = 5.5 * 3_600_000;
 /** Earliest backfill date accepted: far earlier than any data this app could hold, but rejects obvious typos. */
+/** A run that started this recently and has not finished is considered in progress (a function lives at most 300 s). */
+export const ACTIVE_RUN_WINDOW_MS = 6 * 60_000;
+
 export const MIN_ASOF = "2020-01-01";
 
 /** The calendar date (YYYY-MM-DD) it currently is in IST. */

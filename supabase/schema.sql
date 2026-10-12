@@ -118,7 +118,8 @@ alter table report_periods enable row level security;
 
 -- Stage 2 additions (see migrations_004_report_integrity.sql for the commented version).
 create or replace function briefs_protect_delivered() returns trigger
-language plpgsql as $$
+language plpgsql
+set search_path = public, pg_temp as $$
 begin
   if tg_op = 'DELETE' then
     if old.email_status in ('sent', 'sending') then

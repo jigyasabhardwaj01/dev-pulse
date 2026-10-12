@@ -76,6 +76,10 @@ export interface FetchResult {
   failed: number; // how many of them failed
   errors: string[]; // sanitized, short
   truncated: boolean; // some request hit its page cap, so more may exist
+  /** Extra attempts made after a transient failure or a rate-limit wait (not counted in `requests`). */
+  retries?: number;
+  /** Milliseconds spent waiting for a provider's rate limit to reset. */
+  waitedMs?: number;
 }
 
 export type ModelCaller = (prompt: string, opts?: { json?: boolean; deadline?: number }) => Promise<string>;
