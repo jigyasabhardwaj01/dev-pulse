@@ -4,6 +4,8 @@ Weekly, AI-generated digest of what developers are complaining about (Hacker New
 whether each pain point is trending up or down week over week, and which look unresolved.
 Free tiers only: Vercel, Supabase, Google AI Studio (Gemini Flash), Resend.
 
+**Live:** https://dev-pulse-omega-pink.vercel.app · **Repo:** https://github.com/jigyasabhardwaj01/dev-pulse
+
 ## Components Map (as built)
 
 ```mermaid
