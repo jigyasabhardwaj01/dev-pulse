@@ -11,6 +11,8 @@ import { sendBriefEmail } from "@/lib/email";
 import { ACTIVE_RUN_WINDOW_MS, planRun } from "@/lib/run-plan";
 import { periodFor } from "@/lib/week";
 import { sanitizeError } from "@/lib/text";
+import { alertFor, sendFailureAlert, type AlertRun } from "@/lib/alerts";
+import { makeSupabaseTeamStore } from "@/lib/team-store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -23,6 +25,12 @@ function authorized(req: Request): boolean {
   const a = Buffer.from(given);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** Raises a failure alert if the run warrants one. Constructing the store is inside the guard: an alert problem must never fail the run. */
+async function raiseAlert(run: AlertRun): Promise<string> {
+  if (!alertFor(run)) return "none";
+  try { return await sendFailureAlert(makeSupabaseTeamStore(), run, null); } catch (e) { console.error("alert unavailable:", sanitizeError(e)); return "failed"; }
 }
 
 export async function GET(req: Request) {
@@ -83,10 +91,19 @@ export async function GET(req: Request) {
       email: summary.email, brief: summary.brief, sources: Object.fromEntries(Object.entries(summary.sources).map(([k, v]) => [k, v?.status])),
       diagnostics: summary.diagnostics.filter((d) => d.severity !== "info").map((d) => d.code),
     }));
+    // Scheduled problems (failed run, email failed/unconfirmed, every source down) raise one bounded, de-duplicated alert. Never throws.
+    const alert = await raiseAlert({
+      status: summary.status, weekStart: summary.weekStart, trigger: summary.trigger, email: summary.email,
+      sources: Object.fromEntries(Object.entries(summary.sources).map(([k, v]) => [k, v?.status])), codes: summary.diagnostics.filter((d) => d.severity === "error").map((d) => d.code),
+    });
+    if (alert !== "none") console.log(JSON.stringify({ event: "weekly_digest_alert", outcome: alert, weekStart: summary.weekStart }));
     return NextResponse.json({ ok: true, ...summary });
   } catch (e) {
     console.error("weekly digest failed:", sanitizeError(e));
     console.log(JSON.stringify({ event: "weekly_digest", outcome: "failed", weekStart, durationMs: Date.now() - started }));
+    if (plan.trigger === "scheduled") {
+      await raiseAlert({ status: "failed", weekStart, trigger: "scheduled", email: "not_attempted", sources: {}, codes: ["RUN_THREW"] });
+    }
     return NextResponse.json({ ok: false, error: sanitizeError(e) }, { status: 500 });
   }
 }
