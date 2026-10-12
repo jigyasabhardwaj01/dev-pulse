@@ -13,7 +13,9 @@ Once a week it collects developer conversations (Hacker News, Stack Overflow, Re
 
 `src/lib/week.ts` `periodFor`: seven complete IST days, Friday 00:00:00.000 IST to Thursday 23:59:59.999 IST (end exclusive), ending at the most recent Friday 00:00 IST at or before the run. Example: a run on Fri 2026-10-09 09:00 IST covers 2026-10-01T18:30Z to 2026-10-08T18:30Z, key `2026-10-02`; the previous period starts 2026-09-24T18:30Z, key `2026-09-25`. Checked over 3 years of run times: no gaps, no overlaps, every key a Friday.
 
-`vercel.json` cron `30 3 * * 5`. Vercel Hobby fires cron anywhere within the hour, so a run lands between 08:30 and 09:29 IST; delivery is best-effort, can be duplicated, and is never retried.
+**Weekly cron is currently PAUSED** (`vercel.json` has `"crons": []`, since 2026-10-12, pending the first verified delivery). To resume, restore `{ "crons": [{ "path": "/api/cron/weekly-digest", "schedule": "30 3 * * 5" }] }` and redeploy. The route itself stays available; without the cron, nothing runs it unless someone calls it with the bearer token.
+
+Schedule when active: `vercel.json` cron `30 3 * * 5`. Vercel Hobby fires cron anywhere within the hour, so a run lands between 08:30 and 09:29 IST; delivery is best-effort, can be duplicated, and is never retried.
 
 ### `asOf` backfills (`src/lib/run-plan.ts`)
 `?asOf=YYYY-MM-DD` is an IST date. Rejected with HTTP 400: wrong format, impossible dates (Feb 30, non-leap Feb 29, month 13), dates after today (IST), dates before 2020-01-01, and a repeated parameter. A valid asOf is a **backfill**: it never emails and never touches delivery state.
