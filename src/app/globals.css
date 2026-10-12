@@ -326,7 +326,7 @@ details.tech dl div { display: flex; justify-content: space-between; gap: 12px; 
   .donut-wrap { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 }
 
-/* ---------- team workflow: watchlist, review, pack, sign-in ---------- */
+/* ---------- team workflow: watchlist, review, pack ---------- */
 .stack { display: grid; gap: 12px; } .stack-sm { display: grid; gap: 8px; }
 .row-wrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .input { font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 10px; padding: 8px 12px; min-height: 40px; min-width: 0; max-width: 100%; }

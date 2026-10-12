@@ -16,15 +16,13 @@ import { getReport, listReports } from "@/lib/data";
 import { comparisonStatus, computeKpis, evidenceHref, previousWeekKey, readCoverage, selectMovers, shortRange, type Mover } from "@/lib/insights";
 import { displayPoints } from "@/lib/report-model";
 import { pct } from "@/lib/view";
-import { currentSession } from "@/lib/session";
 import { analysisFor } from "@/lib/analysis-source";
 import { makeSupabaseStore } from "@/lib/store";
 import { makeSupabaseTeamStore } from "@/lib/team-store";
 
-/** Shortlisting needs a signed-in person AND an analysis for that week (sealed or derived); without one the control would only fail. */
+/** Shortlisting needs an analysis for that week (sealed or derived); without one the control would only fail. */
 async function canShortlistWeek(week: string): Promise<boolean> {
   try {
-    if (!(await currentSession())) return false;
     return (await analysisFor(makeSupabaseStore(), makeSupabaseTeamStore(), week)).kind !== "none";
   } catch { return false; }
 }

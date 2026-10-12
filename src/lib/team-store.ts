@@ -2,7 +2,7 @@ import { supabaseFromEnv } from "./store";
 import type { ReportAnalysis } from "./analysis";
 import type { Sensitivity, TermKind, TermStatus, WatchTerm } from "./watchlist";
 
-/* Persistence for everything the team touches: watchlist edits, review items, votes, decisions, packs, alerts and sign-in tokens. */
+/* Persistence for everything the team touches: watchlist edits, review items, votes, decisions, packs and alerts. */
 
 export const REVIEW_STATES = ["under_review", "open_for_votes", "prioritised", "parked", "rejected", "already_addressed", "withdrawn"] as const;
 export type ReviewState = (typeof REVIEW_STATES)[number];
@@ -70,11 +70,6 @@ export interface TeamStore {
   releaseAlert(key: string): Promise<void>;
   countAlerts(kind: string, since: Date): Promise<number>;
 
-  // sign-in
-  createToken(nonce: string, email: string, expiresAt: Date): Promise<void>;
-  /** Marks the link used exactly once. Returns the email on success, null when unknown, expired or already used. */
-  consumeToken(nonce: string, now: Date): Promise<string | null>;
-  countTokens(email: string, since: Date): Promise<number>;
 }
 
 type Db = ReturnType<typeof supabaseFromEnv>;
@@ -206,18 +201,5 @@ export function makeSupabaseTeamStore(db: Db = supabaseFromEnv()): TeamStore {
       return res.count ?? 0;
     },
 
-    async createToken(nonce, email, expiresAt) {
-      ok(await db.from("auth_tokens").insert({ nonce, email, expires_at: expiresAt.toISOString() }), "create token");
-    },
-    async consumeToken(nonce, now) {
-      // One conditional UPDATE: of two simultaneous uses only one can match "used_at is null".
-      const rows = ok(await db.from("auth_tokens").update({ used_at: now.toISOString() }).eq("nonce", nonce).is("used_at", null).gt("expires_at", now.toISOString()).select("email"), "consume token") as { email: string }[];
-      return rows[0]?.email ?? null;
-    },
-    async countTokens(email, since) {
-      const res = await db.from("auth_tokens").select("nonce", { count: "exact", head: true }).eq("email", email).gte("created_at", since.toISOString());
-      if (res.error) throw new Error(`supabase count tokens: ${res.error.message}`);
-      return res.count ?? 0;
-    },
   };
 }

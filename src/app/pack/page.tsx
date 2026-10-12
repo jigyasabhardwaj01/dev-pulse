@@ -22,7 +22,7 @@ function Rows({ rows }: { rows: PackDecision[] }) {
       {rows.map((r) => (
         <li key={r.itemId}>
           <strong>{r.theme}</strong>{r.followup && <span className="pill info" style={{ marginLeft: 6 }}>Follow-up</span>}
-          <span className="muted small" style={{ display: "block" }}>Decided by {r.decidedBy} · {formatDateTime(r.decidedAt)}{r.votes ? ` · votes at the time: ${r.votes.prioritise} prioritise, ${r.votes.park} park` : ""}</span>
+          <span className="muted small" style={{ display: "block" }}>Decided {r.decidedBy.startsWith("visitor-") ? "anonymously" : "by " + r.decidedBy} · {formatDateTime(r.decidedAt)}{r.votes ? ` · votes at the time: ${r.votes.prioritise} prioritise, ${r.votes.park} park` : ""}</span>
           <span style={{ display: "block" }}>“{r.rationale}”</span>
         </li>
       ))}
@@ -31,8 +31,6 @@ function Rows({ rows }: { rows: PackDecision[] }) {
 }
 
 export default async function Pack() {
-  const session = await currentSession();
-  if (!session) return <EmptyState title="Sign in to see the pack" body="The Monday pack lists the team's decisions, so it is for signed-in team members." action={{ href: "/signin", label: "Sign in" }} />;
   let view;
   try { view = await loadPack(); } catch { view = null; }
   if (!view) return <EmptyState title="We couldn't load the pack" body="The database didn't answer. Nothing was changed. Reload in a moment." action={{ href: "/pack", label: "Reload" }} />;
@@ -40,16 +38,16 @@ export default async function Pack() {
   return (
     <>
       <header className="page-head">
-        <p className="eyebrow">Planning · built from the saved report and the owner's decisions</p>
+        <p className="eyebrow">Planning · built from the saved report and recorded decisions</p>
         <h1>Monday Pack</h1>
-        <p className="lede">What the team decided to work on, from the latest Friday report. It is built on request, not on a schedule, and only the owner can build or refresh it.</p>
-        <div className="chips-row">{session.role === "owner" ? <PackBuild hasPack={Boolean(row)} /> : <span className="muted small">Only the owner can build or refresh the pack.</span>}</div>
+        <p className="lede">What the team decided to work on, from the latest Friday report. It is built on request, not on a schedule, and anyone can build or refresh it.</p>
+        <div className="chips-row"><PackBuild hasPack={Boolean(row)} /></div>
       </header>
       {!pack || !row ? <EmptyState title="No pack has been built yet" body="When the owner builds it, it will list prioritised work from recorded decisions. Until then, nothing is committed for the coming week." action={{ href: "/review", label: "Go to review" }} /> : (
         <>
-          <p className={`alert ${freshness === "current" ? "info" : "warn"}`} role="status">{FRESH[freshness]?.text} Built {formatDateTime(row.created_at)} by {row.created_by}{pack.periodLabel ? ` from the report for ${pack.periodLabel}` : ""}.</p>
+          <p className={`alert ${freshness === "current" ? "info" : "warn"}`} role="status">{FRESH[freshness]?.text} Built {formatDateTime(row.created_at)}{pack.periodLabel ? ` from the report for ${pack.periodLabel}` : ""}.</p>
           <section className="card card-pad section" aria-labelledby="c-h">
-            <h2 id="c-h">Committed (decided by the owner)</h2>
+            <h2 id="c-h">Committed (decided by a person)</h2>
             <p className="muted">{pack.message}</p>
             {pack.committed.length > 0 && <Rows rows={pack.committed} />}
           </section>
