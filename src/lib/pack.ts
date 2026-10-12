@@ -3,8 +3,8 @@ import type { FridayBrief } from "./friday-brief";
 import { decisionsDigest } from "./team";
 
 /*
- * The Monday sprint pack. Built ONLY from the saved Friday report and the owner's current, final decisions. It is a document
- * for planning, not a schedule: nothing here invents a calendar, an owner or an estimate. AI-written suggestions are kept in
+ * The Monday sprint pack. Built ONLY from the saved Friday report and the current, final decisions. It is a document
+ * for planning, not a schedule: nothing here invents a calendar, an owner or an estimate. Automatically generated suggestions are kept in
  * their own labelled section; the committed list contains only what a human decided.
  */
 export interface PackDecision {
@@ -30,7 +30,7 @@ export interface SprintPack {
   disclaimer: string;
 }
 
-export const PACK_DISCLAIMER = "Committed items are the owner's recorded decisions. Suggestions are AI-written prompts for discussion and are not approved work. Votes informed the discussion; they did not decide it.";
+export const PACK_DISCLAIMER = "Committed items are recorded decisions. Suggestions are prompts generated automatically from the report's numbers; they are not findings and not approved work. Votes informed the discussion; they did not decide it.";
 
 export function buildPack(args: { now: Date; brief: FridayBrief | null; items: ReviewItem[]; decisions: Decision[]; votesByItem?: Map<string, { prioritise: number; park: number; total: number }> }): { pack: SprintPack; digest: string } {
   const byItem = new Map(args.items.map((i) => [i.id, i]));
@@ -46,7 +46,7 @@ export function buildPack(args: { now: Date; brief: FridayBrief | null; items: R
   const message = state === "no_report" ? "There is no saved Friday report yet, so there is nothing to plan from."
     : state === "no_decisions" ? "No decisions have been recorded yet. Nothing is committed for the coming week; the suggestions below are prompts only."
       : committed.length === 0 ? "Decisions are recorded, but none was prioritised: nothing is committed for the coming week."
-        : `${committed.length} item${committed.length === 1 ? "" : "s"} prioritised by the owner.`;
+        : `${committed.length} item${committed.length === 1 ? "" : "s"} prioritised.`;
   const pack: SprintPack = {
     version: 1, builtAt: args.now.toISOString(), weekStart: args.brief?.weekStart ?? null, periodLabel: args.brief?.periodLabel ?? null, state, message,
     committed, notPursued, followups: rows.filter((r) => r.followup),

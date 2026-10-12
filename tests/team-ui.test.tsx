@@ -115,13 +115,13 @@ describe("Monday pack page", async () => {
     expect(o).toContain("No pack has been built yet"); expect(o).toContain("nothing is committed for the coming week"); expect(o).toContain("Build pack");
     expect(o).not.toMatch(/Sign in|Only the owner/);
   });
-  it("a pack separates committed (human) from AI suggestions, and says when it is stale", async () => {
+  it("a pack separates committed (human) from generated suggestions, and says when it is stale", async () => {
     mocks.session = { email: "visitor", role: "owner" };
     mocks.pack.mockResolvedValue({ row: { created_at: "2026-10-12T06:00:00Z", created_by: "owner@team.test" }, pack: pack(), freshness: "stale_decisions" });
     const out = await page();
     expect(out).toContain("Committed (decided by a person)"); expect(out).toContain("Unblocks release");
     expect(out).toContain("Out of date: decisions have changed"); expect(out).toContain("Refresh pack");
-    expect(out).toContain("AI-written prompts. Nobody has approved these."); expect(out).toContain("not approved work");
+    expect(out).toContain("Generated automatically from the report"); expect(out).not.toContain("AI-written"); expect(out).toContain("not approved work");
     expect(out).toContain("Limitations (1)");
   });
   it("a pack with no decisions never claims committed work", async () => {
