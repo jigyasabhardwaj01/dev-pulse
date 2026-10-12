@@ -31,6 +31,7 @@ export const REMEDY: Record<string, string> = {
   CLASSIFY_ABORTED: "Posts stay unclassified and are retried on the next run. Check the OpenRouter key, credit balance and the function logs.",
   CLASSIFY_PENDING: "These posts are retried automatically on the next run.",
   SUMMARY_FALLBACK: "Check that the OpenRouter key and credit balance are healthy; the numbers are unaffected.",
+  EMAIL_WITHHELD: "Set OPENROUTER_API_KEY in the deployment, then trigger the weekly route once (authenticated, no asOf). The report is regenerated with AI and emailed exactly once.",
   EMAIL_UNCONFIRMED: "Check the inbox, then follow the unconfirmed-delivery steps in BACKEND.md. It is never resent automatically.",
   EMAIL_STATE_CHECK_FAILED: "Nothing was sent. The next run retries once the database answers.",
   EMAIL_FAILED: "The next scheduled run retries it.",

@@ -332,6 +332,7 @@ describe("failure alerts", () => {
     expect(alertFor(run({ status: "partial", email: "unconfirmed" }))?.kind).toBe("email_unconfirmed");
     expect(alertFor(run({ status: "partial", email: "sent", sources: { hn: "error", reddit: "error" } }))?.kind).toBe("sources_down");
     expect(alertFor(run({ status: "partial", email: "sent", sources: { hn: "ok", reddit: "error" } }))).toBeNull();
+    expect(alertFor(run({ status: "partial", email: "not_attempted", codes: ["CLASSIFY_NO_MODEL", "EMAIL_WITHHELD"] }))?.kind).toBe("email_withheld");
     expect(alertFor(run({ trigger: "backfill" }))).toBeNull();
     expect(alertFor(run({ status: "succeeded", email: "sent" }))).toBeNull();
   });

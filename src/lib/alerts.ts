@@ -8,12 +8,13 @@ import type { FetchLike } from "./types";
  * only safe codes, never raw errors, URLs with tokens, or credentials. Uses the existing Resend configuration and approved recipient.
  */
 export const MAX_PER_DAY = 3;
-export type AlertKind = "run_failed" | "email_failed" | "email_unconfirmed" | "sources_down";
+export type AlertKind = "run_failed" | "email_failed" | "email_unconfirmed" | "sources_down" | "email_withheld";
 
 export interface AlertRun { status: string; weekStart: string; trigger: string; email: string; sources: Record<string, string | undefined>; codes: string[] }
 
 export function alertFor(run: AlertRun): { kind: AlertKind; headline: string } | null {
   if (run.trigger !== "scheduled") return null; // backfills and manual runs are watched by a person
+  if (run.codes.includes("EMAIL_WITHHELD")) return { kind: "email_withheld", headline: "The weekly report was saved but not emailed: the AI provider is not configured." };
   if (run.status === "failed") return { kind: "run_failed", headline: "The weekly run failed." };
   if (run.email === "failed") return { kind: "email_failed", headline: "The weekly report was saved but could not be emailed." };
   if (run.email === "unconfirmed") return { kind: "email_unconfirmed", headline: "The weekly email may or may not have been delivered; it was not retried, to avoid a duplicate." };

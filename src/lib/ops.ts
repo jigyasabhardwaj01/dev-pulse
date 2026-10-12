@@ -28,5 +28,5 @@ export function readCheckpoint(cp: Checkpoint, topicName: string, now: Date): Ch
 }
 
 export interface AlertRow { id: number; kind: string; key: string; status: string; at: string; runId: string | null }
-export const ALERT_KIND: Record<string, string> = { run_failed: "Weekly run failed", email_failed: "Email could not be sent", email_unconfirmed: "Email delivery uncertain", sources_down: "Every source failed" };
+export const ALERT_KIND: Record<string, string> = { run_failed: "Weekly run failed", email_failed: "Email could not be sent", email_unconfirmed: "Email delivery uncertain", sources_down: "Every source failed", email_withheld: "Report held back: AI provider missing" };
 export const alertKindLabel = (k: string) => ALERT_KIND[k] ?? k;

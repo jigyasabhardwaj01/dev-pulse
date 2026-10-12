@@ -311,3 +311,29 @@ describe("the weekly analysis is sealed with the report", () => {
     expect(last.analysis!.baseline.available).toBe(false);
   });
 });
+
+describe("an unconfigured AI provider must never freeze a degraded report by emailing it", () => {
+  it("a scheduled run with no model saves the report, does NOT send, says why, and is partial", async () => {
+    const store = new MemoryStore(); const send = sent();
+    const s = await runDigest(base(store, { callModel: null, sendEmail: send, trigger: "scheduled" }));
+    expect(send).not.toHaveBeenCalled();
+    expect(s.email).toBe("not_attempted");
+    expect(s.status).toBe("partial");
+    expect(s.diagnostics.map((d) => d.code)).toEqual(expect.arrayContaining(["CLASSIFY_NO_MODEL", "EMAIL_WITHHELD"]));
+    expect((await store.getBrief(WEEK))?.emailStatus ?? null).not.toBe("sent");
+  });
+  it("once the provider is configured, the same period regenerates and is delivered exactly once", async () => {
+    const store = new MemoryStore(); const send = sent();
+    await runDigest(base(store, { callModel: null, sendEmail: send, trigger: "scheduled" }));
+    const fixed = await runDigest(base(store, { sendEmail: send, trigger: "scheduled" }));
+    expect(fixed.email).toBe("sent");
+    expect(send).toHaveBeenCalledTimes(1);
+    const again = await runDigest(base(store, { sendEmail: send, trigger: "scheduled" }));
+    expect(again.email).toBe("already_sent");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("a backfill without a model is unaffected (it never emails anyway)", async () => {
+    const s = await runDigest(base(new MemoryStore(), { callModel: null, trigger: "backfill" }));
+    expect(s.diagnostics.map((d) => d.code)).not.toContain("EMAIL_WITHHELD");
+  });
+});

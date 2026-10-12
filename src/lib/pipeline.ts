@@ -416,7 +416,12 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
 
     // 12. email: scheduled runs only, at most once per reporting week, built from the SAVED version
     let email: EmailOutcome = "not_attempted";
-    if (deps.sendEmail && trigger === "scheduled") {
+    // A delivered report is frozen for good. With no AI provider configured, nothing new could be classified and the summary is a
+    // template, so delivering now would permanently freeze a degraded report. Keep it saved and unsent; once the provider is
+    // configured, a manual trigger for the same period regenerates it (it is not frozen) and sends it exactly once.
+    const withheld = Boolean(deps.sendEmail) && trigger === "scheduled" && !callModel;
+    if (withheld) diag.add({ code: "EMAIL_WITHHELD", severity: "error", stage: "email", message: "The report was saved but not emailed, because the AI provider is not configured and the report would be incomplete. It stays unsent so it can be regenerated and delivered once, after the provider is fixed." }, null);
+    if (deps.sendEmail && trigger === "scheduled" && !withheld) {
       email = await deliverOnce(store, deps.sendEmail, {
         weekStart: period.weekStart,
         version: saved.version,
@@ -428,7 +433,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       }, diag, deps.sleep);
     }
 
-    const problems = outcomes.some((o) => o.status !== "ok") || pending > 0 || backlogRemaining > 0 || email === "failed" || email === "unconfirmed";
+    const problems = outcomes.some((o) => o.status !== "ok") || pending > 0 || backlogRemaining > 0 || email === "failed" || email === "unconfirmed" || withheld;
     const status: RunStatus = problems ? "partial" : "succeeded";
     await obs.finish(runId, {
       status, fetched_total: fetchedPosts.length, new_posts: fresh.length, classified_ok: classified,
