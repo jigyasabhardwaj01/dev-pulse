@@ -5,7 +5,7 @@ import { describeCron, nextWeeklyRun, readSchedule, type ScheduleState } from "@
 import { NOW, ago as daysAgo, allClean, run, src } from "./health-helpers";
 
 const PAUSED: ScheduleState = { state: "paused", crons: [] };
-const WEEKLY: ScheduleState = { state: "configured", crons: [{ path: "/api/cron/weekly-digest", schedule: "30 3 * * 5" }] };
+const WEEKLY: ScheduleState = { state: "configured", crons: [{ path: "/api/cron/weekly-digest", schedule: "30 0 * * 5" }] };
 const UNKNOWN: ScheduleState = { state: "unknown", crons: null };
 const assess = (runs: ReturnType<typeof run>[], schedule: ScheduleState = PAUSED) => assessHealth({ runs, schedule, now: NOW });
 const reddit = (over: Parameters<typeof src>[1]) => allClean().map((s) => (s.source === "reddit" ? src("reddit", over) : s));
@@ -210,18 +210,20 @@ describe("stages backed by structured diagnostics", () => {
 describe("schedule and freshness", () => {
   it("the deployed vercel.json registers exactly one weekly cron for the authenticated digest route", () => {
     const crons = (vercelConfig as { crons: { path: string; schedule: string }[] }).crons;
-    expect(crons).toEqual([{ path: "/api/cron/weekly-digest", schedule: "30 3 * * 5" }]); // Fridays 03:30 UTC = 09:00 IST
+    expect(crons).toEqual([{ path: "/api/cron/weekly-digest", schedule: "30 0 * * 5" }]); // Fridays 00:30 UTC = 06:00 IST
     expect(readSchedule(vercelConfig).state).toBe("configured");
     expect(new Set(crons.map((c) => c.path)).size).toBe(crons.length); // never registered twice
     expect(crons.every((c) => !c.path.includes("?"))).toBe(true);       // no query: a plain run, never a backfill (asOf)
   });
   it("reads configured, paused and unknown schedules, and rejects malformed ones", () => {
     expect(readSchedule({ crons: [] })).toEqual({ state: "paused", crons: [] });
-    expect(readSchedule({ crons: [{ path: "/x", schedule: "30 3 * * 5" }] }).state).toBe("configured");
+    expect(readSchedule({ crons: [{ path: "/x", schedule: "30 0 * * 5" }] }).state).toBe("configured");
     for (const bad of [undefined, null, {}, { crons: "x" }, { crons: [{ path: 1 }] }, { crons: [{ path: "/x", schedule: "* * * * *" }, 5] }]) expect(readSchedule(bad).state).toBe("unknown");
   });
   it("describes only the documented weekly cron in words", () => {
+    expect(describeCron("30 0 * * 5")).toContain("Fridays 06:00 IST (00:30 UTC)");
     expect(describeCron("30 3 * * 5")).toContain("Fridays 09:00 IST");
+    expect(describeCron("30 20 * * 4")).toContain("Fridays 02:00 IST"); // IST crosses midnight: the day shifts
     expect(describeCron("0 0 * * *")).toBe("cron 0 0 * * *");
   });
   it("paused: the page says Paused and does not judge how old the last run is, even when it is ancient", () => {
@@ -261,17 +263,18 @@ describe("schedule and freshness", () => {
     expect(assess([run({ trigger: "scheduled", status: "partial" })], WEEKLY).freshness.state).toBe("fresh");
   });
   it("shows the next due time for the documented weekly cron, from the schedule itself", () => {
-    expect(scheduleText(WEEKLY, new Date("2026-10-12T12:00:00Z")).next?.toISOString()).toBe("2026-10-16T03:30:00.000Z");
+    expect(scheduleText(WEEKLY, new Date("2026-10-12T12:00:00Z")).next?.toISOString()).toBe("2026-10-16T00:30:00.000Z");
     expect(scheduleText(PAUSED, NOW).next).toBeNull();
     expect(scheduleText(WEEKLY).next).toBeNull();
   });
-  it("computes the next Friday 03:30 UTC correctly around the boundary, and refuses other expressions", () => {
-    const iso = (s: string) => nextWeeklyRun("30 3 * * 5", new Date(s))!.toISOString();
-    expect(iso("2026-10-16T03:29:59Z")).toBe("2026-10-16T03:30:00.000Z"); // a second before: still today
-    expect(iso("2026-10-16T03:30:00Z")).toBe("2026-10-23T03:30:00.000Z"); // exactly due: the next one
-    expect(iso("2026-10-16T09:00:00Z")).toBe("2026-10-23T03:30:00.000Z");
-    expect(iso("2026-10-17T00:00:00Z")).toBe("2026-10-23T03:30:00.000Z"); // Saturday
-    expect(iso("2026-12-31T23:59:59Z")).toBe("2027-01-01T03:30:00.000Z"); // across a year end (a Friday)
+  it("computes the next Friday 00:30 UTC (06:00 IST) correctly around the boundary, and refuses other expressions", () => {
+    const iso = (s: string) => nextWeeklyRun("30 0 * * 5", new Date(s))!.toISOString();
+    expect(iso("2026-10-16T00:29:59Z")).toBe("2026-10-16T00:30:00.000Z"); // a second before: still today
+    expect(iso("2026-10-16T00:30:00Z")).toBe("2026-10-23T00:30:00.000Z"); // exactly due: the next one
+    expect(iso("2026-10-16T09:00:00Z")).toBe("2026-10-23T00:30:00.000Z");
+    expect(iso("2026-10-17T00:00:00Z")).toBe("2026-10-23T00:30:00.000Z"); // Saturday
+    expect(iso("2026-12-31T23:59:59Z")).toBe("2027-01-01T00:30:00.000Z"); // across a year end (a Friday)
+    expect(nextWeeklyRun("30 3 * * 5", new Date("2026-10-12T00:00:00Z"))!.toISOString()).toBe("2026-10-16T03:30:00.000Z");
     expect(nextWeeklyRun("0 0 * * *", NOW)).toBeNull();
   });
   it("an unreadable schedule is Unknown, never assumed active or paused", () => {

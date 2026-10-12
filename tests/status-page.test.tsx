@@ -13,7 +13,7 @@ vi.mock("@/lib/data", () => data);
 
 const html = (el: React.ReactElement) => renderToStaticMarkup(el);
 const PAUSED: ScheduleState = { state: "paused", crons: [] };
-const WEEKLY: ScheduleState = { state: "configured", crons: [{ path: "/api/cron/weekly-digest", schedule: "30 3 * * 5" }] };
+const WEEKLY: ScheduleState = { state: "configured", crons: [{ path: "/api/cron/weekly-digest", schedule: "30 0 * * 5" }] };
 
 // What the real database looked like after the two backfills: partial runs, Reddit 7 of 9 requests failed, no fully successful run.
 const realish = () => {
@@ -37,7 +37,7 @@ describe("Pipeline Health page", async () => {
     expect(out).toContain("What needs attention");               // is human attention needed
     expect(out).toContain("Scheduled runs");
     expect(out).toContain("Configured");                         // the weekly cron is registered in vercel.json
-    expect(out).toContain("Fridays 09:00 IST");
+    expect(out).toContain("Fridays 06:00 IST");
     expect(out.indexOf("Overall")).toBeLessThan(out.indexOf("Latest run"));
     expect(out.indexOf("What needs attention")).toBeLessThan(out.indexOf("Latest run</h2>"));
     expect(out.indexOf("Latest run</h2>")).toBeLessThan(out.indexOf("Recent runs"));
@@ -176,7 +176,7 @@ describe("HealthSummary", () => {
   it("a configured schedule is shown as configured and stale when the last success is too old", () => {
     const out = view([run({ startedAt: daysAgo(9), finishedAt: daysAgo(9) })], WEEKLY);
     expect(out).toContain("Configured");
-    expect(out).toContain("Fridays 09:00 IST");
+    expect(out).toContain("Fridays 06:00 IST");
     expect(out).toContain("hs-attention");
     expect(out).toContain("more than 8 days ago");
   });

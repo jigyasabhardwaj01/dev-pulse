@@ -158,7 +158,7 @@ describe("scheduled trigger -> report -> email -> health (mocked end to end)", (
     const html = renderToStaticMarkup(<PainPointTable points={displayPoints(view)} weekStart="2026-10-02" />);
     expect(html).toContain(">5<"); // the largest (only) pain point's count on the page equals the stored aggregate
     expect(html).toContain("False positives");
-    expect(world.resendCalls[0].body.html).toContain("5 mentions matched to tracked themes");
+    expect(world.resendCalls[0].body.html).toContain("5 relevant discussions matched across 1 pain point");
     expect(view.delivery).toMatchObject({ status: "sent", version: 1 });
   });
 

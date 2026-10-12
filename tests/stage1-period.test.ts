@@ -81,3 +81,17 @@ describe("run planning: backfills are deterministic and never email", () => {
     }
   });
 });
+
+describe("the Friday 06:00 IST cron (30 0 * * 5)", () => {
+  it("at 06:00 IST (and up to an hour late) it reports the period that ended at 00:00 IST that morning, never the one before or after", () => {
+    for (const t of ["2026-10-16T00:30:00Z", "2026-10-16T01:29:59Z"]) {
+      const p = periodFor(new Date(t));
+      expect(p.weekStart).toBe("2026-10-09"); // Fri 9 Oct 00:00 IST .. Thu 15 Oct 23:59:59.999 IST
+      expect(p.start.toISOString()).toBe("2026-10-08T18:30:00.000Z");
+      expect(p.end.getTime()).toBeLessThanOrEqual(new Date("2026-10-15T18:30:00.000Z").getTime());
+    }
+  });
+  it("a duplicate delivery an hour later resolves to the same report week", () => {
+    expect(periodFor(new Date("2026-10-16T00:30:00Z")).weekStart).toBe(periodFor(new Date("2026-10-16T05:00:00Z")).weekStart);
+  });
+});

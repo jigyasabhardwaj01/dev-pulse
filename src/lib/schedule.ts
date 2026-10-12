@@ -16,20 +16,34 @@ export function readSchedule(config: unknown): ScheduleState {
   return valid.length === crons.length ? { state: "configured", crons: valid } : { state: "unknown", crons: null };
 }
 
-/** Plain wording for a cron expression. Only the project's documented weekly schedule is translated; anything else is shown as written. */
+/** The only shape understood: "<minute> <hour> * * <weekday>" in UTC (Vercel cron is always UTC). Anything else is shown as written. */
+function parseWeekly(expr: string): { minute: number; hour: number; weekday: number } | null {
+  const m = /^(\d{1,2}) (\d{1,2}) \* \* ([0-6])$/.exec(expr.trim());
+  if (!m) return null;
+  const minute = Number(m[1]), hour = Number(m[2]), weekday = Number(m[3]);
+  return minute < 60 && hour < 24 ? { minute, hour, weekday } : null;
+}
+const DAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+const hhmm = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+/** Plain wording for a weekly cron expression, with the IST equivalent (IST = UTC+5:30, no daylight saving). */
 export function describeCron(expr: string): string {
-  return expr.trim() === "30 3 * * 5" ? "Fridays 09:00 IST (03:30 UTC); Vercel may start it up to an hour late" : `cron ${expr}`;
+  const w = parseWeekly(expr);
+  if (!w) return `cron ${expr}`;
+  const ist = (w.hour * 60 + w.minute + 330) % (24 * 60);
+  const dayShift = w.hour * 60 + w.minute + 330 >= 24 * 60 ? 1 : 0;
+  return `${DAYS[(w.weekday + dayShift) % 7]} ${hhmm(Math.floor(ist / 60), ist % 60)} IST (${hhmm(w.hour, w.minute)} UTC${dayShift ? ` ${DAYS[w.weekday]}` : ""}); Vercel may start it up to an hour late`;
 }
 
 /**
- * The next time the documented weekly cron ("30 3 * * 5": Fridays 03:30 UTC) is due, strictly after `now`. Vercel may start it up to an
- * hour late, so this is the due time, not a promise of the start. Any other expression returns null rather than guessing.
+ * The next time a weekly cron is due, strictly after `now`. Vercel may start it up to an hour late, so this is the due time, not a
+ * promise of the start. An expression that is not a plain weekly one returns null rather than guessing.
  */
 export function nextWeeklyRun(expr: string, now: Date): Date | null {
-  if (expr.trim() !== "30 3 * * 5") return null;
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 3, 30, 0, 0));
-  const ahead = (5 - d.getUTCDay() + 7) % 7;
-  d.setUTCDate(d.getUTCDate() + ahead);
+  const w = parseWeekly(expr);
+  if (!w) return null;
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), w.hour, w.minute, 0, 0));
+  d.setUTCDate(d.getUTCDate() + ((w.weekday - d.getUTCDay() + 7) % 7));
   if (d.getTime() <= now.getTime()) d.setUTCDate(d.getUTCDate() + 7);
   return d;
 }
