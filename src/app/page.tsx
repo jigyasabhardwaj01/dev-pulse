@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import ActionBar from "@/components/ActionBar";
 import EmptyState from "@/components/EmptyState";
 import ProblemCard from "@/components/ProblemCard";
 import FridayCard from "@/components/FridayCard";
 import StatusStrip from "@/components/StatusStrip";
+import { readiness } from "@/lib/email-summary";
 import { fridayStatus } from "@/lib/friday-status";
+import { researchGate } from "@/lib/research";
+import { makeSupabaseTeamStore } from "@/lib/team-store";
 import { loadInsights } from "@/lib/insights-data";
 import { problemHref } from "@/lib/insights-view";
 import { readSchedule } from "@/lib/schedule";
@@ -23,9 +27,18 @@ export default async function Insights({ searchParams }: { searchParams: Promise
   try { d = await loadInsights(week); } catch { d = null; }
   if (!d) return <EmptyState title="We couldn't load this week's insights" body="The database didn't answer, so nothing is shown rather than something wrong. Nothing was changed. Try again in a moment." action={{ href: "/", label: "Try again" }} />;
   const { report, run, supported, early, analysis } = d;
-  if (!report) return <EmptyState title="No report yet" body="JARVIS builds its first report on Friday morning (IST). Until then there is nothing to show, and nothing is made up." action={{ href: "/settings", label: "See what JARVIS watches" }} />;
-
   const env = process.env;
+  const gate = researchGate({ now: new Date(), aiConfigured: Boolean(env.OPENROUTER_API_KEY), hasActive: false, runs: d.runs ?? [] });
+  const running = (d.runs ?? []).some((r) => r.status === "running" && !r.stuck);
+  let manual = null;
+  try { manual = report ? ((await makeSupabaseTeamStore().listManualEmailEvents(report.weekStart, 1))[0] ?? null) : null; } catch { /* shown as "none": the send itself re-checks */ }
+  const email = readiness({
+    report, hasAnalysis: d.analysis.kind !== "none", email: { key: Boolean(env.RESEND_API_KEY), recipient: env.DIGEST_TO_EMAIL ?? null },
+    manual: manual ? { at: manual.at, kind: manual.action === "email_resent_manual" ? "resent" : "sent" } : null,
+  });
+  const actions = <ActionBar research={{ blocked: running ? null : gate.ok ? null : gate.message, running }} email={email} />;
+  if (!report) return <>{actions}<EmptyState title="No report yet" body="Press Start Research to create the first one, or wait for Friday morning (IST). Until then there is nothing to show, and nothing is made up." action={{ href: "/settings", label: "See what JARVIS watches" }} /></>;
+
   const friday = fridayStatus({
     now: new Date(), report, runs: d.runs,
     setup: { schedule: readSchedule(vercelConfig), aiKey: Boolean(env.OPENROUTER_API_KEY), emailKey: Boolean(env.RESEND_API_KEY), recipient: env.DIGEST_TO_EMAIL ?? null, cronSecret: Boolean(env.CRON_SECRET) },
@@ -34,10 +47,10 @@ export default async function Insights({ searchParams }: { searchParams: Promise
   const checkedAt = run ? `Last checked ${formatDateTime(run.finishedAt ?? run.startedAt)}.` : undefined;
   return (
     <>
+      {actions}
       <header className="hero">
         <p className="eyebrow">This week · {report.periodLabel}</p>
         <h1>What developers are struggling with</h1>
-        <p className="lede">JARVIS reads public developer discussions, groups the ones about the same problem, and shows the problems with the most evidence behind them.</p>
       </header>
 
       <StatusStrip items={[
@@ -98,11 +111,6 @@ export default async function Insights({ searchParams }: { searchParams: Promise
           <ul className="steps" style={{ marginTop: 10 }}>{d.limitations.map((l) => <li key={l}>{l}</li>)}</ul>
         </details>
       )}
-
-      <section className="explain" aria-label="What to do next">
-        <strong>What you can do next</strong>
-        <span>Open a problem to read the original discussions, shortlist it, and record whether your team will work on it. Your choices appear in the <Link href="/plan">Weekly Action Plan</Link>.</span>
-      </section>
     </>
   );
 }

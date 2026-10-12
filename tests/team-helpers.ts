@@ -55,6 +55,7 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
       return row.id;
     },
     async addEvent(e) { s.events.push({ id: s.events.length + 1, at: iso(), item_id: e.item_id, actor: e.actor, action: e.action, detail: e.detail ?? null }); },
+    async listManualEmailEvents(w, limit) { return s.events.filter((e) => e.item_id === null && (e.action === "email_sent_manual" || e.action === "email_resent_manual") && (e.detail as { weekStart?: string } | null)?.weekStart === w).reverse().slice(0, limit).map((e) => ({ at: e.at, action: e.action as "email_sent_manual" | "email_resent_manual" })); },
     async listEvents(i, limit) { return s.events.filter((e) => e.item_id === i).reverse().slice(0, limit); },
 
     async getDerivedAnalysis(w) { return s.derived.filter((d) => d.week_start === w).sort((a, b) => b.method_version - a.method_version)[0] ?? null; },

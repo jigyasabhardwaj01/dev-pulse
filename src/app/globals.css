@@ -415,3 +415,11 @@ textarea.input { resize: vertical; width: 100%; }
 .action { display: grid; gap: 4px; padding: 12px 16px; border-radius: 12px; background: var(--surface-2); font-size: .92rem; }
 .action.needed { background: var(--warn-soft); border: 1px solid var(--warn); }
 .action ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.action-bar { display: flex; flex-wrap: wrap; gap: 18px 28px; align-items: flex-start; }
+.action-box { display: grid; gap: 6px; max-width: 360px; min-width: 240px; }
+.action-box .btn { justify-content: center; }
+.confirm { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--accent-line); border-radius: 12px; background: var(--surface-2); }
+.warn-box { display: grid; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); border: 1px solid var(--warn); font-size: .9rem; }
+.result { display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; border: 1px solid; font-size: .9rem; }
+.result ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.result.ok { background: var(--ok-soft); border-color: var(--ok); } .result.warn { background: var(--warn-soft); border-color: var(--warn); } .result.bad { background: var(--bad-soft); border-color: var(--bad); }

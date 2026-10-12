@@ -111,7 +111,7 @@ describe("Insights page", async () => {
     expect(out).toContain("What developers are struggling with");
     expect(out).toContain("Top problems this week");
     expect(out).toContain("Who runs into it"); expect(out).toContain("Supporting discussions"); expect(out).toContain("How sure are we"); expect(out).toContain("Compared with last week");
-    expect(out).toContain("What you can do next");
+    expect(out).toContain("Start Research"); expect(out).toContain("Email Summary"); expect(out).not.toContain("What you can do next");
     expect(out).toContain('href="https://x.test/'); expect(out).toContain('rel="noopener noreferrer"');
     expect(out).toContain("Explore &amp; decide");
   });

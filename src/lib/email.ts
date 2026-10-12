@@ -105,6 +105,8 @@ export async function sendBriefEmail(
   args: { weekStart: string; version?: number; narrative: string; points: ThemeTrend[]; comparison?: Comparison | null; coverage?: Coverage; brief?: FridayBrief | null },
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: FetchLike = fetch,
+  /** An intentional second copy of an already-delivered report. It gets its OWN idempotency key (otherwise the provider would silently treat it as the first send) and says so in the subject. */
+  opts: { resendNonce?: string } = {},
 ): Promise<"skipped" | { status: "sent"; messageId: string | null }> {
   const key = env.RESEND_API_KEY;
   const to = env.DIGEST_TO_EMAIL;
@@ -119,12 +121,12 @@ export async function sendBriefEmail(
         // The key is scoped to the saved report VERSION, whose body is identical every time it is rendered. A crash-recovery
         // resend of the same version therefore carries the same key and body, which Resend (documented: 24 h) can
         // de-duplicate; a genuinely new version (after a failed send) gets a new key. Provider behaviour not verified live.
-        "idempotency-key": `dev-pulse-brief-${args.weekStart}-v${args.version ?? 1}`,
+        "idempotency-key": `dev-pulse-brief-${args.weekStart}-v${args.version ?? 1}${opts.resendNonce ? `-resend-${opts.resendNonce}` : ""}`,
       },
       body: JSON.stringify({
         from: "JARVIS <onboarding@resend.dev>",
         to: [to],
-        subject: `JARVIS: developer pain points, week of ${args.weekStart}`,
+        subject: `JARVIS: developer pain points, week of ${args.weekStart}${opts.resendNonce ? " (copy sent again on request)" : ""}`,
         html: args.brief ? renderFridayHtml(args.brief, dashboardUrl(env)) : renderBriefHtml(args.weekStart, args.narrative, args.points, dashboardUrl(env), args.comparison ?? null),
       }),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),

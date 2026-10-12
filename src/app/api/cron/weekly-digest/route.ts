@@ -2,13 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { runDigest } from "@/lib/pipeline";
 import { makeSupabaseStore } from "@/lib/store";
-import { makeHnFetcher } from "@/lib/sources/hn";
-import { makeSoFetcher } from "@/lib/sources/stackoverflow";
-import { makeRedditFetcher } from "@/lib/sources/reddit";
-import { makeGithubFetcher } from "@/lib/sources/github";
-import { openRouterFromEnv } from "@/lib/openrouter";
-import { redditAccessFrom } from "@/lib/sources/reddit-access";
 import { sendBriefEmail } from "@/lib/email";
+import { productionRunDeps } from "@/lib/run-deps";
 import { ACTIVE_RUN_WINDOW_MS, planRun } from "@/lib/run-plan";
 import { periodFor } from "@/lib/week";
 import { sanitizeError } from "@/lib/text";
@@ -43,12 +38,7 @@ export async function GET(req: Request) {
   const plan = planRun(asOfValues.length === 0 ? null : asOfValues.length === 1 ? asOfValues[0] : asOfValues);
   if ("error" in plan) return NextResponse.json({ error: plan.error }, { status: plan.status });
 
-  let callModel = null;
-  try {
-    callModel = openRouterFromEnv();
-  } catch (e) {
-    console.error("ai unavailable:", sanitizeError(e));
-  }
+  const run = productionRunDeps();
 
   let store: ReturnType<typeof makeSupabaseStore>;
   try {
@@ -70,21 +60,10 @@ export async function GET(req: Request) {
   }
 
   const started = Date.now();
-  const redditAccess = redditAccessFrom(process.env);
   try {
     const summary = await runDigest({
       store,
-      fetchers: {
-        hn: makeHnFetcher(),
-        stackoverflow: makeSoFetcher(fetch, process.env.STACKEXCHANGE_KEY),
-        // Reddit is collected only through a supported, reliable method: app-only OAuth (REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET), or the
-        // public feed when REDDIT_PUBLIC_ENABLED=1. From Vercel the public feed was answered with HTTP 429/403 in production, so by
-        // default it is switched off and the report says so, instead of reporting a failed or empty source every week.
-        ...(redditAccess.enabled ? { reddit: makeRedditFetcher(fetch, undefined, { clientId: process.env.REDDIT_CLIENT_ID, clientSecret: process.env.REDDIT_CLIENT_SECRET }) } : {}),
-        github: makeGithubFetcher(fetch, process.env.GITHUB_TOKEN),
-      },
-      callModel,
-      notCollected: redditAccess.enabled ? undefined : { reddit: redditAccess.reason },
+      ...run,
       sendEmail: plan.allowEmail ? (args) => sendBriefEmail(args) : undefined,
       trigger: plan.trigger,
       invokedBy: (req.headers.get("user-agent") ?? "").startsWith("vercel-cron") ? "vercel-cron" : "manual",
