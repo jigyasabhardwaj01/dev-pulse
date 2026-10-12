@@ -1,0 +1,20 @@
+:root { --bg:#fafaf8; --fg:#1b1b18; --muted:#6b6b63; --card:#fff; --line:#e4e3dc; --up:#b42318; --down:#067647; --new:#1d4ed8; --warn:#b54708; }
+@media (prefers-color-scheme: dark) { :root { --bg:#151514; --fg:#ecece6; --muted:#9a9a90; --card:#1e1e1c; --line:#2f2f2b; --up:#f97066; --down:#47cd89; --new:#7aa2ff; --warn:#fdb022; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui,-apple-system,sans-serif; }
+.top { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); max-width:880px; margin:0 auto; }
+.top nav { display:flex; gap:16px; } a { color:inherit; } .brand { font-weight:700; text-decoration:none; }
+main { max-width:880px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:1.6rem; margin:0 0 4px; } .sub { color:var(--muted); margin:0 0 20px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:20px; }
+.card p { margin:0 0 12px; white-space:pre-line; } .card p:last-child { margin:0; }
+ol.points { list-style:none; margin:0; padding:0; counter-reset:n; }
+ol.points li { counter-increment:n; display:flex; gap:12px; align-items:baseline; padding:12px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+ol.points li:last-child { border-bottom:0; }
+ol.points li::before { content:counter(n); color:var(--muted); width:1.4em; font-variant-numeric:tabular-nums; }
+.theme { flex:1 1 220px; } .topic { color:var(--muted); font-size:.85rem; display:block; }
+.count { color:var(--muted); font-size:.9rem; font-variant-numeric:tabular-nums; }
+.trend { font-weight:600; font-variant-numeric:tabular-nums; min-width:5.5em; text-align:right; }
+.trend.up { color:var(--up); } .trend.down { color:var(--down); } .trend.new { color:var(--new); } .trend.flat { color:var(--muted); }
+.badge { font-size:.75rem; padding:2px 8px; border-radius:999px; border:1px solid var(--warn); color:var(--warn); }
+.empty { color:var(--muted); }
