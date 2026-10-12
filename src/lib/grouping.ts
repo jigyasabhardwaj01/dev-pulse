@@ -55,6 +55,7 @@ export const mentionsLine = (i: Pick<PainItem, "count" | "unresolved_count">) =>
 /** Short trend label for display. */
 export function trendLabel(i: Pick<PainItem, "direction" | "pct" | "count" | "previous">): string {
   switch (i.direction) {
+    case "unavailable": return "trend not compared";
     case "new": return "new this week";
     case "up": return `up ${i.pct}% (${i.previous} → ${i.count})`;
     case "down": return i.count === 0 ? `dropped to zero (was ${i.previous})` : `down ${Math.abs(i.pct ?? 0)}% (${i.previous} → ${i.count})`;
@@ -62,4 +63,4 @@ export function trendLabel(i: Pick<PainItem, "direction" | "pct" | "count" | "pr
   }
 }
 
-export const trendArrow = (d: Direction) => (d === "up" ? "▲" : d === "down" ? "▼" : d === "new" ? "●" : "–");
+export const trendArrow = (d: Direction) => (d === "up" ? "▲" : d === "down" ? "▼" : d === "new" ? "●" : d === "unavailable" ? "·" : "–");

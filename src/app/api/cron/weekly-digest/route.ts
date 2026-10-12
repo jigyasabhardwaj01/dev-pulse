@@ -8,6 +8,7 @@ import { makeRedditFetcher } from "@/lib/sources/reddit";
 import { makeGithubFetcher } from "@/lib/sources/github";
 import { geminiFromEnv } from "@/lib/gemini";
 import { sendBriefEmail } from "@/lib/email";
+import { planRun } from "@/lib/run-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -25,10 +26,11 @@ function authorized(req: Request): boolean {
 export async function GET(req: Request) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  // Optional ?asOf=YYYY-MM-DD lets you backfill a prior week to seed a trend baseline.
-  const asOfParam = new URL(req.url).searchParams.get("asOf");
-  const now = asOfParam ? new Date(`${asOfParam}T12:00:00Z`) : new Date();
-  if (Number.isNaN(now.getTime())) return NextResponse.json({ error: "bad asOf" }, { status: 400 });
+  // Optional ?asOf=YYYY-MM-DD (an IST date) runs a backfill for the reporting period that ends at the most recent
+  // Friday 00:00 IST on or before it. Backfills never send email.
+  const asOfValues = new URL(req.url).searchParams.getAll("asOf");
+  const plan = planRun(asOfValues.length === 0 ? null : asOfValues.length === 1 ? asOfValues[0] : asOfValues);
+  if ("error" in plan) return NextResponse.json({ error: plan.error }, { status: plan.status });
 
   let callModel = null;
   try {
@@ -47,9 +49,9 @@ export async function GET(req: Request) {
         github: makeGithubFetcher(fetch, process.env.GITHUB_TOKEN),
       },
       callModel,
-      // backfills (asOf) must not email Sumit a stale brief
-      sendEmail: asOfParam ? undefined : (args) => sendBriefEmail(args),
-      now,
+      sendEmail: plan.allowEmail ? (args) => sendBriefEmail(args) : undefined,
+      trigger: plan.trigger,
+      now: plan.now,
     });
     return NextResponse.json({ ok: true, ...summary });
   } catch (e) {

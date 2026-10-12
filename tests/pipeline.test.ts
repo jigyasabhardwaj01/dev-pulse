@@ -5,7 +5,8 @@ import { makeHnFetcher } from "@/lib/sources/hn";
 import { makeSoFetcher } from "@/lib/sources/stackoverflow";
 import { buildBriefPrompt, generateBrief } from "@/lib/brief";
 import { buildTrends } from "@/lib/trend";
-import { MemoryStore, TOPIC, post } from "./helpers";
+import { periodFor } from "@/lib/week";
+import { MemoryStore, TOPIC, post, seedPreviousReport } from "./helpers";
 
 const NOW = new Date("2026-10-09T03:30:00Z"); // window 2026-10-03 .. 2026-10-09
 const classifyAll = (theme = "False positives") => async (prompt: string) => {
@@ -66,9 +67,14 @@ describe("pipeline", () => {
 
   it("reports a theme that vanished this week as declined", async () => {
     const store = new MemoryStore();
-    store.aggregates.set("2026-09-26", [{ topic_id: "t1", theme: "Slow reviews", count: 4, unresolved: 0 }]);
+    // a previous report recorded under the same IST convention with the same source coverage: a valid baseline
+    seedPreviousReport(store, {
+      weekStart: "2026-09-25", periodStart: "2026-09-24T18:30:00Z",
+      rows: [{ topic_id: "t1", theme: "Slow reviews", count: 4, unresolved: 0 }],
+      sources: { hn: { status: "ok", posts: 4 }, stackoverflow: { status: "ok", posts: 0 } },
+    });
     await runDigest({ store, fetchers: { hn: hn("a"), stackoverflow: so() }, callModel: classifyAll(), now: NOW });
-    const points = store.briefs.get("2026-10-03")!.points;
+    const points = store.briefs.get("2026-10-02")!.points;
     expect(points.find((p) => p.theme === "Slow reviews")).toMatchObject({ direction: "down", pct: -100, count: 0 });
     expect(points.find((p) => p.theme === "False positives")).toMatchObject({ direction: "new" });
   });
@@ -105,7 +111,7 @@ describe("grounded narrative", () => {
 });
 
 describe("source adapters (mocked fetch)", () => {
-  const window = { start: new Date("2026-10-03T00:00:00Z"), end: new Date("2026-10-10T00:00:00Z"), weekStart: "2026-10-03", prevWeekStart: "2026-09-26" };
+  const window = periodFor(new Date("2026-10-09T03:30:00Z"));
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
   it("HN: maps stories and comments, filters non-matching, tolerates a failing request", async () => {
@@ -116,19 +122,22 @@ describe("source adapters (mocked fetch)", () => {
       return json({ hits: [{ objectID: "9", title: "Why code review fails", created_at_i: 1790000000 }, { objectID: "10", title: "unrelated", created_at_i: 1790000000 }] });
     });
     const out = await makeHnFetcher(f)(TOPIC, window);
-    expect(out.every((p) => p.source === "hn" && p.is_answered === null)).toBe(true);
-    expect(out.map((p) => p.source_id)).not.toContain("10");
+    expect(out.posts.every((p) => p.source === "hn" && p.is_answered === null)).toBe(true);
+    expect(out.posts.map((p) => p.source_id)).not.toContain("10");
+    expect(out.failed).toBe(1); // the failed request is reported, not hidden by the ones that worked
     expect(f.mock.calls.some(([u]) => String(u).includes("tags=comment"))).toBe(true);
   });
 
-  it("HN: throws when every request fails", async () => {
-    await expect(makeHnFetcher(async () => json({}, 503))(TOPIC, window)).rejects.toThrow();
+  it("HN: reports total failure when every request fails", async () => {
+    const r = await makeHnFetcher(async () => json({}, 503))(TOPIC, window);
+    expect(r.posts).toEqual([]);
+    expect(r.failed).toBe(r.requests);
   });
 
   it("SO: carries is_answered through", async () => {
     const f = async () => json({ items: [{ question_id: 5, title: "false positive in code review bot", body: "<p>help</p>", link: "https://so/5", is_answered: false, creation_date: 1790000000 }] });
     const out = await makeSoFetcher(f)(TOPIC, window);
-    expect(out[0]).toMatchObject({ source: "stackoverflow", source_id: "5", is_answered: false });
+    expect(out.posts[0]).toMatchObject({ source: "stackoverflow", source_id: "5", is_answered: false });
   });
 });
 

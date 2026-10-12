@@ -23,12 +23,15 @@ export function makeGeminiCaller(opts: {
 
     let lastErr: Error = new Error("gemini: no attempt made");
     for (let attempt = 0; attempt < 3; attempt++) {
+      // Honour the caller's time budget: never start, or wait for, an attempt that would overrun it.
+      const remaining = o?.deadline === undefined ? Infinity : o.deadline - Date.now();
+      if (remaining < 1500) throw new Error("gemini: time budget exhausted");
       try {
         const res = await doFetch(url, {
           method: "POST",
           headers: { "content-type": "application/json", "x-goog-api-key": opts.apiKey },
           body,
-          signal: AbortSignal.timeout(45_000),
+          signal: AbortSignal.timeout(Math.min(45_000, remaining)),
         });
         if (res.status === 429 || res.status >= 500) {
           lastErr = new Error(`gemini http ${res.status}`);
@@ -57,5 +60,7 @@ export function geminiFromEnv(env: NodeJS.ProcessEnv = process.env): ModelCaller
   const model = env.GEMINI_MODEL;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
   if (!model) throw new Error("GEMINI_MODEL is not set (confirm the current Flash id in Google AI Studio)");
+  // Project requirement: every AI task uses Gemini Flash. Refuse to run against any other model family.
+  if (!/flash/i.test(model)) throw new Error(`GEMINI_MODEL "${model}" is not a Gemini Flash model; the project requires Flash`);
   return makeGeminiCaller({ apiKey, model });
 }

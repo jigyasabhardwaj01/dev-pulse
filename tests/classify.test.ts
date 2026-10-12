@@ -53,7 +53,7 @@ describe("classification resilience", () => {
     expect(ok.results[0]).toMatchObject({ theme: "Slow reviews", sentiment: "neutral", unresolved: true });
   });
   it("ignores out-of-range and duplicate indexes", async () => {
-    const model = async () => JSON.stringify([{ index: 9, theme: "Slow reviews" }, { index: 0, theme: "Slow reviews" }, { index: 0, theme: "False positives" }]);
+    const model = async () => JSON.stringify([{ index: 9, theme: "Slow reviews", unresolved: false }, { index: 0, theme: "Slow reviews", unresolved: false }, { index: 0, theme: "False positives", unresolved: false }]);
     const out = await classifyTopicPosts(TOPIC, [stored(0)], model);
     expect(out.results).toHaveLength(1);
     expect(out.results[0].theme).toBe("Slow reviews");

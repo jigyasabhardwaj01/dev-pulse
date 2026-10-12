@@ -16,3 +16,15 @@ export function stripHtml(html: string | null | undefined): string {
 export function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
+
+/** Short, secret-free error text safe to store: no query strings, tokens or auth headers. */
+export function sanitizeError(e: unknown, max = 200): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return raw
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\b(key|token|api_key|apikey|authorization)=[^\s&"']+/gi, "$1=[redacted]")
+    .replace(/https?:\/\/\S+/g, (u) => { try { return new URL(u).host; } catch { return "[url]"; } })
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}

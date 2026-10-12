@@ -1,7 +1,7 @@
-import type { FetchLike, FetchWindow, FetchedPost, Topic } from "../types";
+import type { FetchLike, FetchResult, FetchWindow, FetchedPost, Topic } from "../types";
 import { matchesKeywords } from "../matching";
 import { stripHtml, truncate } from "../text";
-import { getJson, settleAll } from "./http";
+import { getJson, settleRequests, toResult } from "./http";
 
 export const SUBREDDITS = ["programming", "ExperiencedDevs", "devops"];
 export const DEFAULT_USER_AGENT = "DevPulse/1.0 (by /u/devpulse_placeholder)";
@@ -46,17 +46,31 @@ export function parseRedditAtom(xml: string, topicId: string): FetchedPost[] {
   return out;
 }
 
+const LIMIT = 25;
+const DAY = 86_400_000;
+
+/**
+ * Reddit only offers coarse time buckets. Choose the smallest one that still reaches the period start;
+ * the pipeline then discards anything outside the exact period. A Friday run is just over 7 days after
+ * the period began, so a plain "week" bucket would miss its first hours.
+ */
+export function timeBucket(ageMs: number): string {
+  const d = ageMs / DAY;
+  return d <= 6.9 ? "week" : d <= 29 ? "month" : d <= 360 ? "year" : "all";
+}
+
 const quote = (k: string) => (/\s|\//.test(k) ? `"${k}"` : k);
 
 /**
  * Reddit public search (no login). One OR-combined keyword query per subreddit keeps request volume
  * inside Reddit's unauthenticated rate limit; keyword matching is re-checked locally afterwards.
- * Contract: never throws, returns [] on any failure.
+ * Failures are reported in the result (never swallowed), so an outage is distinguishable from "no matches".
  */
 export function makeRedditFetcher(
   fetchImpl: FetchLike = fetch,
   userAgent: string = process.env.REDDIT_USER_AGENT || DEFAULT_USER_AGENT,
   gapMs = 6000,
+  nowMs: () => number = Date.now,
 ) {
   // Reddit's unauthenticated limit is strict: space every request out, across all topics, through one queue.
   let queue: Promise<unknown> = Promise.resolve();
@@ -66,13 +80,15 @@ export function makeRedditFetcher(
     return run;
   };
   let jsonBlocked = false; // once .json is refused, skip straight to RSS for the rest of the run
-  return async function fetchReddit(topic: Topic, _window: FetchWindow): Promise<FetchedPost[]> {
-    try {
+  return async function fetchReddit(topic: Topic, window: FetchWindow): Promise<FetchResult> {
+    let truncated = false;
+    {
       const keywords = topic.keywords.map((k) => k.trim()).filter(Boolean);
-      if (!keywords.length) return [];
+      if (!keywords.length) return { posts: [], requests: 0, failed: 0, errors: [], truncated: false };
       const q = keywords.map(quote).join(" OR ");
+      const mark = (xs: FetchedPost[]) => { if (xs.length >= LIMIT) truncated = true; return xs; };
       const mapJson = (data: RedditListing): FetchedPost[] =>
-        (data.data?.children ?? []).map(({ data: d }): FetchedPost => ({
+        mark((data.data?.children ?? []).map(({ data: d }): FetchedPost => ({
           source: "reddit",
           source_id: d.id,
           topic_id: topic.id,
@@ -82,9 +98,9 @@ export function makeRedditFetcher(
           author: d.author ?? null,
           posted_at: new Date(d.created_utc * 1000).toISOString(),
           is_answered: null,
-        }));
+        })));
       const tasks = SUBREDDITS.map((sub) => () => paced(async (): Promise<FetchedPost[]> => {
-        const params = new URLSearchParams({ q, restrict_sr: "1", sort: "new", t: "week", limit: "25", raw_json: "1" });
+        const params = new URLSearchParams({ q, restrict_sr: "1", sort: "new", t: timeBucket(nowMs() - window.start.getTime()), limit: String(LIMIT), raw_json: "1" });
         let jsonErr: unknown = null;
         if (!jsonBlocked) {
           try {
@@ -100,13 +116,13 @@ export function makeRedditFetcher(
           signal: AbortSignal.timeout(15_000),
         });
         if (!rss.ok) throw jsonErr ?? new Error(`HTTP ${rss.status} for www.reddit.com`);
-        return parseRedditAtom(await rss.text(), topic.id);
+        const xml = await rss.text();
+        // A 200 that is not an Atom feed (e.g. a block page) must count as a failure, not as "no results".
+        if (!/<feed[\s>]/.test(xml)) throw new Error("unexpected Reddit response (not an Atom feed)");
+        return mark(parseRedditAtom(xml, topic.id));
       }));
-      const posts = await settleAll(tasks);
-      return posts.filter((p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords));
-    } catch (err) {
-      console.warn(`reddit fetch failed for "${topic.name}": ${(err as Error).message}`);
-      return [];
+      const settled = await settleRequests(tasks);
+      return toResult(settled, (p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords), truncated);
     }
   };
 }

@@ -1,7 +1,7 @@
-import type { FetchLike, FetchWindow, FetchedPost, Topic } from "../types";
+import type { FetchLike, FetchResult, FetchWindow, FetchedPost, Topic } from "../types";
 import { matchesKeywords } from "../matching";
 import { stripHtml } from "../text";
-import { getJson, settleAll } from "./http";
+import { getJson, settleRequests, toResult } from "./http";
 
 interface SoItem {
   question_id: number;
@@ -17,7 +17,8 @@ const PAGE_SIZE = 30;
 
 /** Stack Overflow via the Stack Exchange API: keyword search (optionally scoped by tag) with is_answered. */
 export function makeSoFetcher(fetchImpl: FetchLike = fetch, apiKey?: string) {
-  return async function fetchSo(topic: Topic, window: FetchWindow): Promise<FetchedPost[]> {
+  return async function fetchSo(topic: Topic, window: FetchWindow): Promise<FetchResult> {
+    let truncated = false;
     const from = Math.floor(window.start.getTime() / 1000);
     const to = Math.floor(window.end.getTime() / 1000) - 1;
     const tagScopes: (string | null)[] = topic.tags.length ? topic.tags : [null];
@@ -35,10 +36,11 @@ export function makeSoFetcher(fetchImpl: FetchLike = fetch, apiKey?: string) {
         });
         if (tag) params.set("tagged", tag);
         if (apiKey) params.set("key", apiKey);
-        const data = await getJson<{ items?: SoItem[]; backoff?: number }>(
+        const data = await getJson<{ items?: SoItem[]; has_more?: boolean; backoff?: number }>(
           `https://api.stackexchange.com/2.3/search/advanced?${params}`,
           fetchImpl,
         );
+        if (typeof data.has_more === "boolean" ? data.has_more : (data.items ?? []).length >= PAGE_SIZE) truncated = true; // has_more is authoritative
         return (data.items ?? []).map((q): FetchedPost => ({
           source: "stackoverflow",
           source_id: String(q.question_id),
@@ -52,7 +54,7 @@ export function makeSoFetcher(fetchImpl: FetchLike = fetch, apiKey?: string) {
         }));
       }),
     );
-    const posts = await settleAll(tasks);
-    return posts.filter((p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords));
+    const settled = await settleRequests(tasks);
+    return toResult(settled, (p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords), truncated);
   };
 }

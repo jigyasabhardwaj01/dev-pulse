@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { matchesKeywords, matchKeyword } from "@/lib/matching";
 import { dedupePosts } from "@/lib/dedupe";
 import { stripHtml } from "@/lib/text";
-import { windowFor } from "@/lib/week";
+import { periodFor } from "@/lib/week";
 import { post } from "./helpers";
 
 describe("keyword matching", () => {
@@ -40,9 +40,10 @@ describe("helpers", () => {
     expect(stripHtml("<p>a &amp; b</p><pre>code</pre>")).toBe("a & b");
   });
   it("builds contiguous equal-length windows", () => {
-    const w = windowFor(new Date("2026-10-09T03:30:00Z"));
-    expect(w.weekStart).toBe("2026-10-03");
-    expect(w.prevWeekStart).toBe("2026-09-26");
-    expect(w.end.toISOString()).toBe("2026-10-10T00:00:00.000Z");
+    const w = periodFor(new Date("2026-10-09T03:30:00Z"));
+    expect(w.end.getTime() - w.start.getTime()).toBe(7 * 86_400_000);
+    expect(w.start.getTime() - w.prevStart.getTime()).toBe(7 * 86_400_000);
+    expect(w.weekStart).toBe("2026-10-02");
+    expect(w.prevWeekStart).toBe("2026-09-25");
   });
 });
