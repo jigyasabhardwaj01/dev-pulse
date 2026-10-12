@@ -1,4 +1,4 @@
-import type { Choice, Decision, PackRow, ReviewEvent, ReviewItem, ReviewState, TeamStore, Vote, WatchChange } from "@/lib/team-store";
+import type { DerivedAnalysis, Choice, Decision, PackRow, ReviewEvent, ReviewItem, ReviewState, TeamStore, Vote, WatchChange } from "@/lib/team-store";
 import type { Sensitivity, WatchTerm } from "@/lib/watchlist";
 
 /** An in-memory TeamStore with the same uniqueness and atomicity guarantees the database gives. */
@@ -7,7 +7,7 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
   const id = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
   const s = {
     terms: [...(seed.terms ?? [])] as WatchTerm[], sensitivity: "balanced" as Sensitivity, changes: [] as WatchChange[], items: [] as ReviewItem[], votes: [] as Vote[],
-    decisions: [] as Decision[], events: [] as ReviewEvent[], packs: [] as PackRow[], alerts: [] as { key: string; kind: string; at: Date }[],
+    decisions: [] as Decision[], events: [] as ReviewEvent[], packs: [] as PackRow[], derived: [] as DerivedAnalysis[], alerts: [] as { key: string; kind: string; at: Date }[],
     tokens: new Map<string, { email: string; expires: Date; used: boolean; created: Date }>(), matched: [] as { topic_id: string; matched_terms: string[] | null }[],
   };
   const iso = () => new Date().toISOString();
@@ -33,7 +33,7 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
     async getItem(i) { return s.items.find((x) => x.id === i) ?? null; },
     async createItem(i) {
       const ex = s.items.find((x) => x.topic_id === i.topic_id && x.theme === i.theme);
-      if (ex) return { item: ex, created: false };
+      if (ex) { if (ex.state === "withdrawn") { ex.state = "under_review"; ex.reason = i.reason; return { item: ex, created: true }; } return { item: ex, created: false }; }
       const item: ReviewItem = { id: id(), state: "under_review", reason: i.reason, created_at: iso(), updated_at: iso(), topic_id: i.topic_id, theme: i.theme, first_week: i.first_week, created_by: i.created_by };
       s.items.push(item); return { item, created: true };
     },
@@ -44,6 +44,7 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
       if (ex) { ex.choice = choice; ex.updated_at = iso(); } else s.votes.push({ item_id: i, voter, choice, updated_at: iso() });
     },
     async deleteVote(i, voter) { const l = s.votes.length; s.votes = s.votes.filter((v) => !(v.item_id === i && v.voter === voter)); return s.votes.length < l; },
+    async clearVotes(i) { const l = s.votes.length; s.votes = s.votes.filter((v) => v.item_id !== i); return l - s.votes.length; },
     async listDecisions(i) { return s.decisions.filter((d) => !i || d.item_id === i).sort((a, b) => b.id - a.id); },
     async recordDecision(d) {
       const it = s.items.find((x) => x.id === d.item_id); if (!it) throw new Error("review item not found");
@@ -55,6 +56,12 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
     },
     async addEvent(e) { s.events.push({ id: s.events.length + 1, at: iso(), item_id: e.item_id, actor: e.actor, action: e.action, detail: e.detail ?? null }); },
     async listEvents(i, limit) { return s.events.filter((e) => e.item_id === i).reverse().slice(0, limit); },
+
+    async getDerivedAnalysis(w) { return s.derived.filter((d) => d.week_start === w).sort((a, b) => b.method_version - a.method_version)[0] ?? null; },
+    async saveDerivedAnalysis(a) {
+      if (s.derived.some((d) => d.week_start === a.week_start && d.method_version === a.method_version)) return null;
+      const row: DerivedAnalysis = { id: id(), created_at: iso(), ...a }; s.derived.push(row); return row;
+    },
 
     async savePack(p) { const row: PackRow = { id: id(), created_at: iso(), ...p }; s.packs.push(row); return row; },
     async latestPack() { return s.packs[s.packs.length - 1] ?? null; },

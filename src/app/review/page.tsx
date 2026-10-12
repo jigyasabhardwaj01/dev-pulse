@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import EmptyState from "@/components/EmptyState";
-import { OwnerControls, VoteControls } from "@/components/ReviewControls";
+import { OwnerControls, VoteControls, WithdrawButton } from "@/components/ReviewControls";
 import { currentSession } from "@/lib/session";
 import { loadReview, type ReviewCard } from "@/lib/team-data";
 import { formatDateTime } from "@/lib/view";
@@ -11,14 +11,15 @@ export const dynamic = "force-dynamic";
 
 const STATE: Record<string, { label: string; cls: string }> = {
   under_review: { label: "Under review", cls: "neutral" }, open_for_votes: { label: "Open for votes", cls: "info" }, prioritised: { label: "Prioritised", cls: "ok" },
-  parked: { label: "Parked", cls: "warn" }, rejected: { label: "Rejected", cls: "bad" }, already_addressed: { label: "Already addressed", cls: "neutral" },
+  parked: { label: "Parked", cls: "warn" }, rejected: { label: "Rejected", cls: "bad" }, already_addressed: { label: "Already addressed", cls: "neutral" }, withdrawn: { label: "Withdrawn", cls: "neutral" },
 };
 const GROUPS: { title: string; states: string[] }[] = [
   { title: "Needs attention", states: ["under_review", "open_for_votes"] },
   { title: "Decided", states: ["prioritised", "parked", "rejected", "already_addressed"] },
+  { title: "Withdrawn", states: ["withdrawn"] },
 ];
 
-function Card({ c, role }: { c: ReviewCard; role: "owner" | "member" }) {
+function Card({ c, role, email }: { c: ReviewCard; role: "owner" | "member"; email: string }) {
   const { item, tally, mine, current, history, voters } = c.view;
   const st = STATE[item.state];
   return (
@@ -45,8 +46,9 @@ function Card({ c, role }: { c: ReviewCard; role: "owner" | "member" }) {
         <details><summary className="small">Earlier decisions ({history.length})</summary>
           <ul className="history-list">{history.map((h) => <li key={h.id}>{formatDateTime(h.decided_at)} · {STATE[h.outcome].label} by {h.decided_by}: “{h.rationale}” (superseded)</li>)}</ul></details>
       )}
+      {(role === "owner" || item.created_by === email) && ["under_review", "open_for_votes"].includes(item.state) && !current && <WithdrawButton itemId={item.id} theme={item.theme} />}
       {item.state === "open_for_votes" && <VoteControls itemId={item.id} mine={mine} />}
-      {role === "owner" && <OwnerControls itemId={item.id} state={item.state} />}
+      {role === "owner" && item.state !== "withdrawn" && <OwnerControls itemId={item.id} state={item.state} />}
     </li>
   );
 }
@@ -75,7 +77,7 @@ export default async function Review() {
         return list.length ? (
           <section key={g.title} className="section" aria-label={g.title}>
             <h2>{g.title} <span className="muted small">({list.length})</span></h2>
-            <ul className="review-grid" style={{ listStyle: "none", margin: 0, padding: 0 }}>{list.map((c) => <Card key={c.view.item.id} c={c} role={session.role} />)}</ul>
+            <ul className="review-grid" style={{ listStyle: "none", margin: 0, padding: 0 }}>{list.map((c) => <Card key={c.view.item.id} c={c} role={session.role} email={session.email} />)}</ul>
           </section>
         ) : null;
       })}

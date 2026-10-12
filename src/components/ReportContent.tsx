@@ -6,6 +6,7 @@ import EmptyState from "@/components/EmptyState";
 import KpiCards from "@/components/KpiCards";
 import MovementBadge from "@/components/MovementBadge";
 import NarrativePanel from "@/components/NarrativePanel";
+import AnalysisStatus from "@/components/AnalysisStatus";
 import PainPointTable from "@/components/PainPointTable";
 import PeriodHeader from "@/components/PeriodHeader";
 import SourceCoverage, { DataNotes } from "@/components/SourceCoverage";
@@ -16,6 +17,17 @@ import { comparisonStatus, computeKpis, evidenceHref, previousWeekKey, readCover
 import { displayPoints } from "@/lib/report-model";
 import { pct } from "@/lib/view";
 import { currentSession } from "@/lib/session";
+import { analysisFor } from "@/lib/analysis-source";
+import { makeSupabaseStore } from "@/lib/store";
+import { makeSupabaseTeamStore } from "@/lib/team-store";
+
+/** Shortlisting needs a signed-in person AND an analysis for that week (sealed or derived); without one the control would only fail. */
+async function canShortlistWeek(week: string): Promise<boolean> {
+  try {
+    if (!(await currentSession())) return false;
+    return (await analysisFor(makeSupabaseStore(), makeSupabaseTeamStore(), week)).kind !== "none";
+  } catch { return false; }
+}
 
 /** A saved report as the Overview (default) or as the full Weekly Report. Read-only: nothing here regenerates or edits a report. */
 export default async function ReportContent({ week, mode = "overview" }: { week?: string; mode?: "overview" | "report" }) {
@@ -32,6 +44,9 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
     return <EmptyState title="No report yet" body="The first report is created by the weekly run. Once it has run, it appears here." action={{ href: "/status", label: "Check pipeline health" }} />;
   }
 
+  const canShortlist = await canShortlistWeek(report.weekStart);
+  // called as a function (not rendered as <AnalysisStatus/>): an async server component, resolved here so the whole report renders in one pass
+  const analysisStatus = await AnalysisStatus({ week: report.weekStart });
   let volume: VolumeRow[] = [];
   try {
     volume = (await listReports()).filter((r) => r.kind === "ist").sort((a, b) => a.weekStart.localeCompare(b.weekStart))
@@ -104,7 +119,8 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
           <div className="section-head"><h2 id="un-heading">Unresolved problems</h2><p>{kpis.unresolvedMentions} of {kpis.mentions} mentions ({pct(kpis.unresolvedShare)}) flagged unresolved</p></div>
           <div className="card card-pad"><List items={selectMovers(points, 10).unresolved} empty="No mention was flagged unresolved." /></div>
         </section>
-        <PainPointTable canShortlist={Boolean(await currentSession().catch(() => null))} points={points} weekStart={report.weekStart} />
+        {analysisStatus}
+        <PainPointTable canShortlist={canShortlist} points={points} weekStart={report.weekStart} />
         <section className="section" aria-labelledby="lim-heading">
           <h2 id="lim-heading">Source coverage and limitations</h2>
           <div className="grid-eq"><SourceCoverage sources={cov?.sources} /><DataNotes sources={cov?.sources} comparison={cov?.comparison} reliability={report.reliability} /></div>
@@ -122,7 +138,8 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
         <KpiCards kpis={kpis} />
       </div>
       <TopMovers movers={selectMovers(points)} weekStart={report.weekStart} previousLabel={previousLabel} />
-      <PainPointTable canShortlist={Boolean(await currentSession().catch(() => null))} points={points} weekStart={report.weekStart} />
+      {analysisStatus}
+        <PainPointTable canShortlist={canShortlist} points={points} weekStart={report.weekStart} />
       <section className="section" aria-labelledby="sup-heading">
         <div className="section-head"><h2 id="sup-heading">Supporting metrics</h2></div>
         <div className="grid-eq">

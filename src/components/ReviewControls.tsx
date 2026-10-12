@@ -65,3 +65,23 @@ export function OwnerControls({ itemId, state }: { itemId: string; state: string
     </div>
   );
 }
+
+export function DeriveButton({ weekStart }: { weekStart: string }) {
+  const { run, pending, notice } = useAction();
+  return (
+    <span className="stack-sm">
+      <button className="btn btn-sm" type="button" disabled={pending} onClick={() => run("POST", "/api/analysis", { weekStart }, "Analysis derived from stored evidence.")}>{pending ? "Deriving…" : "Derive analysis from stored evidence"}</button>
+      <NoticeLine notice={notice} />
+    </span>
+  );
+}
+
+export function WithdrawButton({ itemId, theme }: { itemId: string; theme: string }) {
+  const { run, pending, notice } = useAction();
+  return (
+    <span className="stack-sm">
+      <button className="btn btn-sm" type="button" disabled={pending} onClick={() => run("DELETE", `/api/review/items/${itemId}`, undefined, "Withdrawn from review.")}>Unshortlist<span className="sr-only"> “{theme}”</span></button>
+      <NoticeLine notice={notice} />
+    </span>
+  );
+}

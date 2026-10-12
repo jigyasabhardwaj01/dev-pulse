@@ -3,7 +3,9 @@ import AttentionList from "@/components/AttentionList";
 import EmptyState from "@/components/EmptyState";
 import HealthSummary from "@/components/HealthSummary";
 import LatestRun from "@/components/LatestRun";
+import OpsPanels from "@/components/OpsPanels";
 import RunHistory from "@/components/RunHistory";
+import { loadOps } from "@/lib/ops-data";
 import { getRecentRuns } from "@/lib/data";
 import { assessHealth, attentionItems, formatReadTime } from "@/lib/health";
 import { readSchedule } from "@/lib/schedule";
@@ -22,6 +24,7 @@ export default async function Status() {
   if (runs === null) return <EmptyState title="Run history isn't available yet" body="It starts recording once the reliability update has been applied to the database." />;
   if (!runs.length) return <EmptyState title="No runs recorded yet" body="Each scheduled or backfill run appears here with the health of every source. Until then, health is unknown." />;
 
+  const ops = await loadOps().catch(() => ({ checkpoints: { ok: false as const }, alerts: { ok: false as const }, topics: {} }));
   const schedule = readSchedule(vercelConfig);
   const health = assessHealth({ runs, schedule, now });
   return (
@@ -39,6 +42,7 @@ export default async function Status() {
       <AttentionList items={attentionItems(health)} />
       <LatestRun health={health} now={now} />
       <RunHistory runs={runs} />
+      <OpsPanels {...ops} now={now} />
     </>
   );
 }

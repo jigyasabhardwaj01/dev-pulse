@@ -35,6 +35,24 @@ export async function shortlist(
   return { ok: true, item, created };
 }
 
+/**
+ * Unshortlist. The person who shortlisted it, or the owner, may withdraw an item that has no recorded decision. The row and its
+ * audit events stay; its votes are cleared (the count is recorded in the event). Shortlisting the same theme again reopens it.
+ */
+export async function withdrawItem(store: TeamStore, s: Session, id: string): Promise<Result<{ item: ReviewItem }>> {
+  const cur = await store.getItem(id);
+  if (!cur) return fail(404, "Item not found.");
+  if (s.role !== "owner" && cur.created_by !== s.email) return fail(403, "Only the person who shortlisted this, or the owner, can withdraw it.");
+  if (cur.state === "withdrawn") return { ok: true, item: cur };
+  if (!["under_review", "open_for_votes"].includes(cur.state) || (await store.listDecisions(id)).length) return fail(409, "A decision has been recorded for this item, so it can no longer be withdrawn. The owner can record a new decision instead.");
+  const from = cur.state;
+  const discarded = await store.clearVotes(id);
+  const item = await store.setState(id, "withdrawn");
+  if (!item) return fail(404, "Item not found.");
+  await store.addEvent({ item_id: id, actor: s.email, action: "withdrawn", detail: { from, votesDiscarded: discarded } });
+  return { ok: true, item };
+}
+
 /** The owner opens an item for voting, or returns it to review. Final states are changed only by recording a decision. */
 export async function setItemState(store: TeamStore, s: Session, id: string, state: unknown): Promise<Result<{ item: ReviewItem }>> {
   if (s.role !== "owner") return fail(403, "Only the owner can change an item's state.");
@@ -42,9 +60,10 @@ export async function setItemState(store: TeamStore, s: Session, id: string, sta
   const cur = await store.getItem(id);
   if (!cur) return fail(404, "Item not found.");
   if (cur.state === state) return { ok: true, item: cur };
+  const from = cur.state;
   const item = await store.setState(id, state as ReviewState);
   if (!item) return fail(404, "Item not found.");
-  await store.addEvent({ item_id: id, actor: s.email, action: "state_changed", detail: { from: cur.state, to: state } });
+  await store.addEvent({ item_id: id, actor: s.email, action: "state_changed", detail: { from, to: state } });
   return { ok: true, item };
 }
 

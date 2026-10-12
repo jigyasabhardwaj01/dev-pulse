@@ -1,9 +1,10 @@
 import { supabaseFromEnv } from "./store";
+import type { ReportAnalysis } from "./analysis";
 import type { Sensitivity, TermKind, TermStatus, WatchTerm } from "./watchlist";
 
 /* Persistence for everything the team touches: watchlist edits, review items, votes, decisions, packs, alerts and sign-in tokens. */
 
-export const REVIEW_STATES = ["under_review", "open_for_votes", "prioritised", "parked", "rejected", "already_addressed"] as const;
+export const REVIEW_STATES = ["under_review", "open_for_votes", "prioritised", "parked", "rejected", "already_addressed", "withdrawn"] as const;
 export type ReviewState = (typeof REVIEW_STATES)[number];
 export const OUTCOMES = ["prioritised", "parked", "rejected", "already_addressed"] as const;
 export type Outcome = (typeof OUTCOMES)[number];
@@ -16,6 +17,12 @@ export interface Decision { id: number; item_id: string; outcome: Outcome; decid
 export interface VoteTally { prioritise: number; park: number; total: number }
 export interface ReviewEvent { id: number; at: string; item_id: string | null; actor: string; action: string; detail: unknown }
 export interface WatchChange { id: number; at: string; actor: string; action: string; subject: string; before: unknown; after: unknown }
+export interface DerivedAnalysis { id: string; week_start: string; method_version: number; analysis: ReportAnalysis; provenance: DerivedProvenance; created_by: string; created_at: string }
+export interface DerivedProvenance {
+  method: string; derivedAt: string; derivedBy: string; reportVersion: number; reportEmailStatus: string | null; evidencePosts: number;
+  /** true when none of the posts carry v2 classification metadata (confidence, excerpt, resolution), so evidence strength is limited */
+  legacyClassification: boolean; notes: string[];
+}
 export interface PackRow { id: string; created_at: string; created_by: string; week_start: string | null; content: unknown; decisions_digest: string }
 
 export interface TeamStore {
@@ -41,10 +48,17 @@ export interface TeamStore {
   upsertVote(itemId: string, voter: string, choice: Choice): Promise<void>;
   deleteVote(itemId: string, voter: string): Promise<boolean>;
   listDecisions(itemId?: string): Promise<Decision[]>;
+  /** Removes every vote on an item and returns how many there were (used when an item is withdrawn). */
+  clearVotes(itemId: string): Promise<number>;
   /** Atomically supersedes the current decision, records this one and moves the item to the matching state. */
   recordDecision(d: { item_id: string; outcome: Outcome; decided_by: string; rationale: string; evidence: unknown; vote_snapshot: VoteTally; followup: boolean }): Promise<number>;
   addEvent(e: { item_id: string | null; actor: string; action: string; detail?: unknown }): Promise<void>;
   listEvents(itemId: string, limit: number): Promise<ReviewEvent[]>;
+
+  // derived analyses (immutable, owner-authorised, never part of a delivered report)
+  getDerivedAnalysis(weekStart: string): Promise<DerivedAnalysis | null>;
+  /** Inserts a new immutable row. Returns null (and writes nothing) if this week and method version already has one. */
+  saveDerivedAnalysis(a: { week_start: string; method_version: number; analysis: ReportAnalysis; provenance: DerivedProvenance; created_by: string }): Promise<DerivedAnalysis | null>;
 
   // packs
   savePack(p: { created_by: string; week_start: string | null; content: unknown; decisions_digest: string }): Promise<PackRow>;
@@ -121,6 +135,12 @@ export function makeSupabaseTeamStore(db: Db = supabaseFromEnv()): TeamStore {
       if (!ins.error) return { item: ins.data as ReviewItem, created: true };
       if (ins.error.code !== UNIQUE) throw new Error(`supabase create review item: ${ins.error.message}`);
       const ex = ok(await db.from("review_items").select("*").eq("topic_id", i.topic_id).eq("theme", i.theme).single(), "existing review item") as ReviewItem;
+      if (ex.state === "withdrawn") {
+        // shortlisting a withdrawn theme again reopens the same row (the unique key stays one row per theme) with the new reason
+        const re = ok(await db.from("review_items").update({ state: "under_review", reason: i.reason, updated_at: new Date().toISOString() }).eq("id", ex.id).eq("state", "withdrawn").select("*").maybeSingle(), "reopen review item") as ReviewItem | null;
+        if (re) return { item: re, created: true };
+        return { item: (ok(await db.from("review_items").select("*").eq("id", ex.id).single(), "review item")) as ReviewItem, created: false };
+      }
       return { item: ex, created: false };
     },
     async setState(id, state) {
@@ -136,6 +156,9 @@ export function makeSupabaseTeamStore(db: Db = supabaseFromEnv()): TeamStore {
     async deleteVote(itemId, voter) {
       return (ok(await db.from("review_votes").delete().eq("item_id", itemId).eq("voter", voter).select("voter"), "withdraw vote") as unknown[]).length > 0;
     },
+    async clearVotes(itemId) {
+      return (ok(await db.from("review_votes").delete().eq("item_id", itemId).select("voter"), "clear votes") as unknown[]).length;
+    },
     async listDecisions(itemId) {
       const q = db.from("review_decisions").select("*");
       return ok(await (itemId ? q.eq("item_id", itemId) : q).order("decided_at", { ascending: false }).order("id", { ascending: false }), "decisions") as Decision[];
@@ -149,6 +172,16 @@ export function makeSupabaseTeamStore(db: Db = supabaseFromEnv()): TeamStore {
     },
     async listEvents(itemId, limit) {
       return ok(await db.from("review_events").select("*").eq("item_id", itemId).order("at", { ascending: false }).order("id", { ascending: false }).limit(limit), "events") as ReviewEvent[];
+    },
+
+    async getDerivedAnalysis(weekStart) {
+      const rows = ok(await db.from("report_analyses").select("*").eq("week_start", weekStart).order("method_version", { ascending: false }).limit(1), "derived analysis") as DerivedAnalysis[];
+      return rows[0] ?? null;
+    },
+    async saveDerivedAnalysis(a) {
+      const res = await db.from("report_analyses").insert(a).select("*").single();
+      if (res.error?.code === UNIQUE) return null;
+      return ok(res, "save derived analysis") as DerivedAnalysis;
     },
 
     async savePack(p) {

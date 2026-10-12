@@ -4,6 +4,7 @@ import { makeSupabaseTeamStore, type TeamStore } from "./team-store";
 import { makeSupabaseStore } from "./store";
 import { sanitizeError } from "./text";
 import type { PainPointLookup } from "./team";
+import { analysisFor } from "./analysis-source";
 
 const NO_STORE = { "cache-control": "no-store" };
 export const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE });
@@ -33,7 +34,7 @@ export async function guarded(
 
 /** Resolves a pain point in the SAVED report's sealed analysis, so only real ones can be shortlisted. */
 export const savedPainPointLookup: PainPointLookup = async (weekStart, topicId, theme) => {
-  const brief = await makeSupabaseStore().getBrief(weekStart);
-  const p = brief?.analysis?.painPoints.find((x) => x.topic_id === topicId && x.theme === theme);
+  const a = await analysisFor(makeSupabaseStore(), makeSupabaseTeamStore(), weekStart);
+  const p = a.kind === "none" ? undefined : a.analysis.painPoints.find((x) => x.topic_id === topicId && x.theme === theme);
   return p ? { links: p.links, discussions: p.discussions } : null;
 };

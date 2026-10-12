@@ -2,6 +2,7 @@ import { makeSupabaseStore } from "./store";
 import { makeSupabaseTeamStore, type Decision, type PackRow, type ReviewItem, type TeamStore, type VoteTally, type WatchChange } from "./team-store";
 import { countTermMatches, termActivity, type Sensitivity, type TermActivity, type WatchTerm } from "./watchlist";
 import { viewItem } from "./team";
+import { analysisFor } from "./analysis-source";
 import type { Session } from "./auth";
 import { decisionsDigest } from "./team";
 import { packFreshness, type SprintPack } from "./pack";
@@ -46,7 +47,7 @@ export async function loadReview(session: Session, team: TeamStore = makeSupabas
   const [items, topics] = await Promise.all([team.listItems(), store.getActiveTopics()]);
   const names = new Map(topics.map((t) => [t.id, t.name]));
   const weeks = [...new Set(items.map((i) => i.first_week).filter((w): w is string => Boolean(w)))];
-  const briefs = new Map(await Promise.all(weeks.map(async (w) => [w, (await store.getBrief(w))?.analysis ?? null] as const)));
+  const briefs = new Map(await Promise.all(weeks.map(async (w) => { const a = await analysisFor(store, team, w); return [w, a.kind === "none" ? null : a.analysis] as const; })));
   return Promise.all(items.map(async (item: ReviewItem) => {
     const a = item.first_week ? briefs.get(item.first_week) : null;
     const p = a?.painPoints.find((x) => x.topic_id === item.topic_id && x.theme === item.theme);
