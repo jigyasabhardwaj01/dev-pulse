@@ -485,7 +485,7 @@ const MARK_BACKOFF_MS = [500, 1_500];
  * Not exactly-once, but a duplicate now needs a person to resend by hand. A definite rejection (4xx) is marked failed and
  * retried by the next run.
  */
-async function deliverOnce(
+export async function deliverOnce(
   store: Store,
   send: NonNullable<Deps["sendEmail"]>,
   args: EmailArgs,

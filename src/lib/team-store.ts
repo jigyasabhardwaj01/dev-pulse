@@ -55,6 +55,8 @@ export interface TeamStore {
   recordDecision(d: { item_id: string; outcome: Outcome; decided_by: string; rationale: string; evidence: unknown; vote_snapshot: VoteTally; followup: boolean }): Promise<number>;
   addEvent(e: { item_id: string | null; actor: string; action: string; detail?: unknown }): Promise<void>;
   listEvents(itemId: string, limit: number): Promise<ReviewEvent[]>;
+  /** Manual email sends for one report week (newest first), from the audit trail. Not part of any report's delivery record. */
+  listManualEmailEvents(weekStart: string, limit: number): Promise<{ at: string; action: "email_sent_manual" | "email_resent_manual" }[]>;
 
   // derived analyses (immutable, owner-authorised, never part of a delivered report)
   getDerivedAnalysis(weekStart: string): Promise<DerivedAnalysis | null>;
@@ -165,6 +167,9 @@ export function makeSupabaseTeamStore(db: Db = supabaseFromEnv()): TeamStore {
     },
     async addEvent(e) {
       ok(await db.from("review_events").insert({ item_id: e.item_id, actor: e.actor, action: e.action, detail: e.detail ?? null }), "event");
+    },
+    async listManualEmailEvents(weekStart, limit) {
+      return ok(await db.from("review_events").select("at, action").is("item_id", null).in("action", ["email_sent_manual", "email_resent_manual"]).eq("detail->>weekStart", weekStart).order("at", { ascending: false }).limit(limit), "manual email events") as { at: string; action: "email_sent_manual" | "email_resent_manual" }[];
     },
     async listEvents(itemId, limit) {
       return ok(await db.from("review_events").select("*").eq("item_id", itemId).order("at", { ascending: false }).order("id", { ascending: false }).limit(limit), "events") as ReviewEvent[];

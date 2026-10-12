@@ -10,6 +10,8 @@ const MAX_KEYS = 5000;
 export interface Limit { name: string; max: number; windowMs: number }
 export const WRITE_LIMIT: Limit = { name: "write", max: 40, windowMs: 60_000 };
 export const HEAVY_LIMIT: Limit = { name: "heavy", max: 4, windowMs: 10 * 60_000 };
+export const EMAIL_LIMIT: Limit = { name: "email", max: 3, windowMs: 10 * 60_000 };
+export const STATUS_LIMIT: Limit = { name: "status", max: 120, windowMs: 60_000 };
 export const READ_EXPORT_LIMIT: Limit = { name: "export", max: 20, windowMs: 60_000 };
 
 /** The caller's address as forwarded by the hosting platform; "unknown" shares one bucket, which only makes the limit stricter. */
