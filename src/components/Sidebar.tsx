@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrandMark, Icon } from "./Icons";
-import { NAV } from "./nav";
+import { NAV, SETTINGS } from "./nav";
 
 export default function Sidebar() {
   const path = usePathname();
@@ -13,7 +13,7 @@ export default function Sidebar() {
         <span className="brand-mark"><BrandMark /></span>
         <span className="brand-name">JARVIS</span>
       </Link>
-      <p className="side-label" id="nav-label">Workspace</p>
+      <p className="side-label" id="nav-label">Menu</p>
       <nav className="side-nav" aria-labelledby="nav-label">
         {NAV.map((n) => (
           <Link key={n.href} href={n.href} aria-current={n.match(path) ? "page" : undefined}>
@@ -22,9 +22,8 @@ export default function Sidebar() {
         ))}
       </nav>
       <div className="side-foot">
-        <strong>Reporting week</strong>
-        <span>Seven complete days, Friday 00:00 to Thursday 23:59 IST.</span>
-        <span>Themes assigned by Gemini Flash via OpenRouter.</span>
+        <Link href={SETTINGS.href} className="side-settings" aria-current={SETTINGS.match(path) ? "page" : undefined}><Icon name="settings" />{SETTINGS.label}</Link>
+        <span>A weekly read on what developers struggle with, built from public discussions.</span>
       </div>
     </aside>
   );

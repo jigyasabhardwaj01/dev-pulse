@@ -484,35 +484,38 @@ describe("Application shell", async () => {
   const { default: Sidebar } = await import("@/components/Sidebar");
   const { default: MobileBar } = await import("@/components/MobileBar");
   const { default: TopBar } = await import("@/components/TopBar");
-  const { NAV, MOBILE_PRIMARY, MOBILE_MORE, activeItem } = await import("@/components/nav");
-  it("the sidebar lists every page and marks exactly the active one", async () => {
-    for (const [path, label] of [["/", "Overview"], ["/reports/2026-10-02", "Weekly Reports"], ["/posts", "Evidence Explorer"], ["/history", "History"], ["/watchlist", "Watchlist"], ["/review", "Team Review"], ["/pack", "Monday Pack"], ["/status", "Pipeline Health"]]) {
+  const { NAV, SETTINGS, MOBILE_PRIMARY, MOBILE_MORE, activeItem } = await import("@/components/nav");
+  it("the product is three places plus Settings, and exactly the active one is marked", async () => {
+    for (const [path, label] of [["/", "Insights"], ["/explore", "Explore & Decide"], ["/explore/problem", "Explore & Decide"], ["/plan", "Weekly Action Plan"], ["/settings", "Settings & Diagnostics"], ["/status", "Settings & Diagnostics"], ["/reports/2026-10-02", "Settings & Diagnostics"], ["/watchlist", "Settings & Diagnostics"]]) {
       nav.path = path;
       const out = html(<Sidebar />);
-      for (const n of NAV) expect(out).toContain(n.label);
+      for (const n of [...NAV, SETTINGS]) expect(out).toContain(n.label.replace("&", "&amp;"));
       expect(out.match(/aria-current="page"/g)).toHaveLength(1);
-      expect(out).toMatch(new RegExp(`aria-current="page"[^>]*>(?:<svg[\\s\\S]*?</svg>)?${label}`));
+      expect(out).toMatch(new RegExp(`aria-current="page"[^>]*>(?:<svg[\\s\\S]*?</svg>)?${label.replace("&", "&amp;")}`));
     }
   });
-  it("the mobile bar keeps three destinations and an accessible menu for the rest", () => {
+  it("the sidebar never shows technical terms on the main navigation", () => {
+    nav.path = "/";
+    expect(html(<Sidebar />)).not.toMatch(/Pipeline|Evidence Explorer|History|Watchlist|Monday/);
+  });
+  it("the mobile bar has the three destinations and an accessible menu holding Settings", () => {
     nav.path = "/";
     const out = html(<MobileBar />);
-    expect(MOBILE_PRIMARY.map((n) => n.label)).toEqual(["Overview", "Weekly Reports", "Evidence Explorer"]);
-    expect(MOBILE_MORE.map((n) => n.label)).toEqual(["History", "Watchlist", "Team Review", "Monday Pack", "Pipeline Health"]);
+    expect(MOBILE_PRIMARY.map((n) => n.label)).toEqual(["Insights", "Explore & Decide", "Weekly Action Plan"]);
+    expect(MOBILE_MORE.map((n) => n.label)).toEqual(["Settings & Diagnostics"]);
     expect(out).toContain('aria-expanded="false"');
     expect(out).toContain('aria-controls="more-menu"');
-    expect(out).toContain('aria-label="More pages and settings"');
     expect(out).not.toContain('id="more-menu"'); // closed by default
   });
   it("the top bar names the current page", () => {
-    nav.path = "/history";
-    expect(html(<TopBar />)).toContain("History");
+    nav.path = "/status";
+    expect(html(<TopBar />)).toContain("Settings &amp; Diagnostics");
     nav.path = "/unknown";
     expect(activeItem("/unknown")).toBeUndefined();
     expect(html(<TopBar />)).toContain("JARVIS");
   });
-  it("navigation hrefs are unique and the top-level routes exist", () => {
-    expect(new Set(NAV.map((n) => n.href)).size).toBe(NAV.length);
-    expect(NAV.map((n) => n.href)).toEqual(["/", "/reports", "/posts", "/history", "/watchlist", "/review", "/pack", "/status"]);
+  it("navigation hrefs are unique", () => {
+    expect(NAV.map((n) => n.href)).toEqual(["/", "/explore", "/plan"]);
+    expect(SETTINGS.href).toBe("/settings");
   });
 });

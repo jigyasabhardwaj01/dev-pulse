@@ -1,11 +1,9 @@
 import { makeSupabaseStore } from "./store";
-import { makeSupabaseTeamStore, type Decision, type PackRow, type ReviewItem, type TeamStore, type VoteTally, type WatchChange } from "./team-store";
+import { makeSupabaseTeamStore, type ReviewItem, type TeamStore, type VoteTally, type WatchChange } from "./team-store";
 import { countTermMatches, termActivity, type Sensitivity, type TermActivity, type WatchTerm } from "./watchlist";
 import { viewItem } from "./team";
 import { analysisFor } from "./analysis-source";
 import type { Session } from "./auth";
-import { decisionsDigest } from "./team";
-import { packFreshness, type SprintPack } from "./pack";
 
 export const PRODUCTIVITY_DAYS = 28;
 
@@ -56,13 +54,4 @@ export async function loadReview(session: Session, team: TeamStore = makeSupabas
   }));
 }
 
-export interface PackView { row: PackRow | null; pack: SprintPack | null; freshness: ReturnType<typeof packFreshness> }
-export async function loadPack(team: TeamStore = makeSupabaseTeamStore()): Promise<PackView> {
-  const [row, decisions] = await Promise.all([team.latestPack(), team.listDecisions()]);
-  const pack = (row?.content as SprintPack | undefined) ?? null;
-  const store = makeSupabaseStore();
-  const periods = await store.listReportPeriods(new Date(Date.now() - 120 * 86_400_000));
-  const latestWeek = periods[0]?.week_start ?? null;
-  return { row, pack, freshness: packFreshness(row ? { digest: row.decisions_digest, weekStart: row.week_start } : null, decisionsDigest(decisions as Decision[]), latestWeek) };
-}
 export type { VoteTally };
