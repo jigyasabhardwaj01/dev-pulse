@@ -226,3 +226,13 @@ describe("store: run health and error handling", () => {
   });
 });
 
+
+describe("documents are cleaned of NUL before they reach Postgres", () => {
+  it("saveBrief strips U+0000 from the analysis it writes", async () => {
+    const { store, log } = fake(() => ok([{ version: 1 }]));
+    await store.saveBrief("2026-10-02", { ...draft, analysis: { version: 1, painPoints: [{ title: "a\u0000b" }] } as never }, null);
+    const sent = JSON.stringify(log[0].calls.find((c) => c.m === "upsert")!.args[0]);
+    expect(sent).not.toContain("\\u0000");
+    expect(sent).toContain("ab");
+  });
+});

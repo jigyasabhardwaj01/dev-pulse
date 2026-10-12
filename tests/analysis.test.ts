@@ -153,7 +153,7 @@ describe("baseline: only with four comparable preceding weeks", () => {
   it("is available with four consecutive comparable weeks, and is the mean (missing themes count as zero)", () => {
     const { baseline, means } = computeBaseline("2026-10-09", COV, four((n) => (n === 1 ? [tc("Slow reviews", 8)] : n === 2 ? [tc("Slow reviews", 4)] : [])));
     expect(baseline).toMatchObject({ available: true, weeks: BASELINE_WEEKS, reason: null });
-    expect(means.get("t1\u0000Slow reviews")).toBe(3);
+    expect(means.get("t1|Slow reviews")).toBe(3);
   });
   it("a missing week (a gap) makes it unavailable", () => {
     const prior = [1, 2, 4, 5].map((n) => priorWeek(n));
@@ -240,7 +240,7 @@ describe("ranking is explicit, explained and defensible", () => {
     const posts = [5, 4, 3, 2, 1].flatMap((n, i) => many(n, () => ({ theme: `Theme ${i}`, source: i % 2 ? "reddit" : "hn" })));
     const a = analyse(base({ posts }));
     expect(a.top).toHaveLength(TOP_N);
-    expect(a.top.map((k) => k.split("\u0000")[1])).toEqual(["Theme 0", "Theme 1", "Theme 2"]);
+    expect(a.top.map((k) => k.split("|")[1])).toEqual(["Theme 0", "Theme 1", "Theme 2"]);
     expect(a.painPoints.find((p) => p.theme === "Theme 4")!.eligibleForTop).toBe(false); // a single discussion is not enough
   });
   it("says so honestly when fewer than three pain points have enough evidence", () => {
@@ -290,5 +290,21 @@ describe("limitations tell the truth about coverage", () => {
   it("an empty week is a valid, honest analysis", () => {
     const a = analyse(base());
     expect(a).toMatchObject({ painPoints: [], top: [], totals: { relevantDiscussions: 0, painPoints: 0 } });
+  });
+});
+
+describe("the sealed analysis must be storable in Postgres jsonb (regression: derive/save failed with 'unsupported Unicode escape sequence')", () => {
+  it("stripNul removes U+0000 wherever it appears in a document, and leaves clean documents untouched", async () => {
+    const { stripNul } = await import("@/lib/json-safe");
+    const dirty = { a: "x\u0000y", list: [{ t: "\u0000start" }, "ok"], n: 3 };
+    expect(JSON.stringify(dirty)).toContain("\\u0000");
+    expect(stripNul(dirty)).toEqual({ a: "xy", list: [{ t: "start" }, "ok"], n: 3 });
+    const clean = { a: 1 };
+    expect(stripNul(clean)).toBe(clean);
+  });
+  it("keys and the top list use a jsonb-safe separator", () => {
+    const a = analyse(base({ posts: many(3), trends: trendsOf([tc("Slow reviews", 3)], []) }));
+    expect(a.painPoints[0].key).toBe("t1|Slow reviews");
+    expect(JSON.stringify(a)).not.toContain("\\u0000");
   });
 });

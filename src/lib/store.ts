@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Classification, StoredPost, ThemeCount, ThemeTrend, Topic } from "./types";
 import type { EvidencePost, PriorWeek } from "./analysis";
+import { stripNul } from "./json-safe";
 import type { Checkpoint } from "./checkpoints";
 import { shiftWeek } from "./analysis";
 import type { ConfigSnapshot, WatchConfig, WatchTerm } from "./watchlist";
@@ -328,7 +329,7 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
     // predicate under the row lock, so a write based on a stale read, or racing a delivery, matches zero rows.
     // The email_* columns are never part of this write, so delivery metadata is preserved.
     async saveBrief(weekStart, draft, expectVersion) {
-      const content = {
+      const content = stripNul({
         narrative: draft.narrative,
         top_pain_points: draft.points,
         coverage: draft.coverage,
@@ -336,7 +337,7 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
         used_fallback: draft.usedFallback,
         config_snapshot: draft.configSnapshot ?? null,
         analysis: draft.analysis ?? null,
-      };
+      });
       if (expectVersion === null) {
         const rows = ok(
           await db.from("briefs").upsert({ week_start: weekStart, ...content, version: 1 }, { onConflict: "week_start", ignoreDuplicates: true }).select("version"),
