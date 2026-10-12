@@ -87,6 +87,7 @@ export async function GET(req: Request) {
       notCollected: redditAccess.enabled ? undefined : { reddit: redditAccess.reason },
       sendEmail: plan.allowEmail ? (args) => sendBriefEmail(args) : undefined,
       trigger: plan.trigger,
+      invokedBy: (req.headers.get("user-agent") ?? "").startsWith("vercel-cron") ? "vercel-cron" : "manual",
       now: plan.now,
     });
     // One structured line per run for the Vercel logs: counts and outcomes only, never credentials or raw errors.

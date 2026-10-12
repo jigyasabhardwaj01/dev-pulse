@@ -356,7 +356,7 @@ textarea.input { resize: vertical; width: 100%; }
 .hero { display: grid; gap: 10px; }
 .hero h1 { max-width: 22ch; }
 .hero .lede { color: var(--muted); max-width: 62ch; font-size: 1.02rem; }
-.status-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.status-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .status-item { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .status-item .k { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 700; }
 .status-item strong { display: flex; gap: 8px; align-items: center; font-size: .95rem; }
@@ -407,3 +407,11 @@ textarea.input { resize: vertical; width: 100%; }
 .radios small { display: block; color: var(--muted); font-weight: 400; }
 @media (max-width: 760px) { .status-strip { grid-template-columns: 1fr; } .problem { padding: 18px 16px; } .cmp th { width: 110px; } }
 @media print { .sidebar, .topbar, .mtop, .footer, .no-print { display: none !important; } .app { display: block; } body { background: #fff; color: #000; } .card { box-shadow: none; } }
+.friday { padding: 20px 22px; display: grid; gap: 14px; }
+.verdict { display: grid; gap: 2px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border-strong); }
+.verdict.ok { background: var(--ok-soft); border-color: var(--ok); } .verdict.warn { background: var(--warn-soft); border-color: var(--warn); } .verdict.bad { background: var(--bad-soft); border-color: var(--bad); }
+.verdict strong { font-size: 1.02rem; } .verdict span { color: var(--muted); font-size: .9rem; }
+.friday .status-strip { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.action { display: grid; gap: 4px; padding: 12px 16px; border-radius: 12px; background: var(--surface-2); font-size: .92rem; }
+.action.needed { background: var(--warn-soft); border: 1px solid var(--warn); }
+.action ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }

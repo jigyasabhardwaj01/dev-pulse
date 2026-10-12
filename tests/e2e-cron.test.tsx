@@ -81,9 +81,9 @@ afterEach(() => {
 });
 
 const mem = () => store.current as MemoryStore;
-const call = async (qs = "", auth: string | null = "Bearer s3cret") => {
+const call = async (qs = "", auth: string | null = "Bearer s3cret", ua?: string) => {
   const { GET } = await import("@/app/api/cron/weekly-digest/route");
-  return GET(new Request(`http://localhost/api/cron/weekly-digest${qs}`, { headers: auth ? { authorization: auth } : {} }));
+  return GET(new Request(`http://localhost/api/cron/weekly-digest${qs}`, { headers: { ...(auth ? { authorization: auth } : {}), ...(ua ? { "user-agent": ua } : {}) } }));
 };
 
 /** What the status page would read back for this store's runs, built as data.ts builds it from the database. */
@@ -327,5 +327,28 @@ describe("Reddit is off unless a supported access method is configured (mocked e
     expect(redditAccessFrom({ REDDIT_CLIENT_ID: "a", REDDIT_CLIENT_SECRET: "b" } as never)).toEqual({ enabled: true, method: "oauth" });
     expect(redditAccessFrom({ REDDIT_PUBLIC_ENABLED: "1" } as never)).toEqual({ enabled: true, method: "public" });
     expect(redditAccessFrom({ REDDIT_PUBLIC_ENABLED: "true" } as never)).toMatchObject({ enabled: false });
+  });
+});
+
+describe("who started the run is recorded (evidence that the real schedule fired)", () => {
+  const by = (body: { diagnostics: { code: string; detail?: { by?: string } }[] }) => body.diagnostics.find((d) => d.code === "RUN_INVOKED")?.detail?.by;
+  it("a request with Vercel's cron user agent is recorded as vercel-cron", async () => {
+    const body = await (await call("", "Bearer s3cret", "vercel-cron/1.0")).json();
+    expect(by(body)).toBe("vercel-cron");
+  });
+  it("any other authenticated request is recorded as manual, so a person's call can never be mistaken for the schedule", async () => {
+    expect(by(await (await call("", "Bearer s3cret", "curl/8.0")).json())).toBe("manual");
+  });
+  it("without the secret nothing runs, whatever the user agent claims", async () => {
+    const r = await call("", null, "vercel-cron/1.0");
+    expect(r.status).toBe(401);
+    expect(world.fetchCalls).toHaveLength(0);
+    expect(mem().runs).toHaveLength(0);
+  });
+  it("a wrong secret and an almost-right secret are refused", async () => {
+    expect((await call("", "Bearer nope", "vercel-cron/1.0")).status).toBe(401);
+    expect((await call("", "Bearer s3cretX", "vercel-cron/1.0")).status).toBe(401);
+    expect((await call("", "Bearer s3cre", "vercel-cron/1.0")).status).toBe(401);
+    expect((await call("", "s3cret", "vercel-cron/1.0")).status).toBe(401);
   });
 });

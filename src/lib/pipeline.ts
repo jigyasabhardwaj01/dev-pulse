@@ -45,6 +45,8 @@ export interface Deps {
   sendEmail?: (args: EmailArgs) => Promise<SendResult>;
   /** Backfills never email, even if a sender is supplied. Defaults to "scheduled". */
   trigger?: Trigger;
+  /** Who started this run: Vercel's scheduler or a person calling the route. Recorded as a diagnostic so "did the real schedule fire?" can be answered from evidence. */
+  invokedBy?: "vercel-cron" | "manual";
   now?: Date;
   clock?: () => number; // injectable for tests
   /** Total time the run plans to use. Vercel's limit for this route is 300 s (route.ts maxDuration). */
@@ -180,6 +182,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "collect", message: "Collection checkpoints could not be read, so every window is fetched in full." }, `checkpoints unreadable: ${errMsg(e)}`);
     }
 
+    if (deps.invokedBy) diag.add({ code: "RUN_INVOKED", severity: "info", stage: "run", message: deps.invokedBy === "vercel-cron" ? "Started by Vercel's weekly schedule." : "Started by a request to the weekly route (not by the schedule).", detail: { by: deps.invokedBy } }, null);
     // 3. fetch every (topic, source) independently; one failed source never blocks the others
     const sources = Object.keys(fetchers) as Source[];
     const notCollected: NotCollected = Object.fromEntries(Object.entries(deps.notCollected ?? {}).filter(([s]) => !(s in fetchers)));

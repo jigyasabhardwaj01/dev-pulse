@@ -32,6 +32,8 @@ export interface ProblemView {
   /** Why this problem was not ranked, when it was not. */
   notRankedBecause: string | null;
   rank: number | null;
+  /** A generated suggestion for what to do next, never an agreed action. */
+  nextAction: string;
   evidence: EvidenceLink[];
   firstSeen: string;
   lastSeen: string;
@@ -60,6 +62,13 @@ function notRanked(p: PainPointAnalysis): string | null {
   return "Most of the evidence is a weak signal, so it is not ranked.";
 }
 
+function nextActionOf(p: PainPointAnalysis, trend: TrendKind): string {
+  if (!p.eligibleForTop) return "Treat this as a hint. Read the discussions before deciding anything.";
+  if (trend === "increasing") return "It is growing. Check whether a recent release or policy change lines up with it, then decide.";
+  if (trend === "new") return "It is new this week. Read the discussions to see whether it is real for your team.";
+  return "Check whether it shows up in your own repositories or support requests, then decide.";
+}
+
 export function toProblem(p: PainPointAnalysis, week: string, analysis: ReportAnalysis): ProblemView {
   const sources = Object.keys(p.sources).map(sourceName);
   const idx = analysis.top.indexOf(p.key);
@@ -73,6 +82,7 @@ export function toProblem(p: PainPointAnalysis, week: string, analysis: ReportAn
     discussions: p.discussions, sources, repeats: Math.max(0, p.rawPosts - p.discussions), unresolved: p.resolution.open,
     trend: trendOf(p), confidence: confidenceOf(p), supported: p.eligibleForTop, notRankedBecause: notRanked(p),
     rank: idx >= 0 ? idx + 1 : null,
+    nextAction: nextActionOf(p, trendOf(p).kind),
     evidence: p.links, firstSeen: p.firstSeen, lastSeen: p.lastSeen,
   };
 }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getRecentRuns } from "@/lib/data";
 import { ago, scheduleText } from "@/lib/health";
 import { readSchedule } from "@/lib/schedule";
+import { maskEmail } from "@/lib/friday-status";
 import { redditAccessFrom } from "@/lib/sources/reddit-access";
 import vercelConfig from "../../../vercel.json";
 
@@ -46,7 +47,13 @@ export default async function Settings() {
             <tr><th scope="row">Reddit</th><td>{reddit.enabled ? "Switched on, but not yet confirmed working" : "Not collected"}{!reddit.enabled && <span className="muted small" style={{ display: "block" }}>{reddit.reason}.</span>}</td></tr>
           </tbody>
         </table>
-        <p className="muted small">{schedule.label}. {schedule.detail}</p>
+        <p className="muted small">{schedule.detail}</p>
+      </section>
+
+      <section className="card card-pad stack" aria-labelledby="mail-h">
+        <h2 id="mail-h">Weekly email</h2>
+        <p>Sent automatically every Friday to <strong>{maskEmail(process.env.DIGEST_TO_EMAIL) ?? "no recipient configured"}</strong>. {schedule.label}.</p>
+        <p className="muted small">There is no button that sends it. Each report is emailed once and is never resent. A practice (&ldquo;rehearsal&rdquo;) email can be sent by a maintainer from a script; it is labelled [Rehearsal] and does not count as the real delivery.</p>
       </section>
 
       <section aria-label="More pages"><ul className="settings-grid" style={{ listStyle: "none", margin: 0, padding: 0 }}>
