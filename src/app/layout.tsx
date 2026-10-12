@@ -13,7 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <header className="top">
           <Link href="/" className="brand">Dev Pulse</Link>
-          <nav><Link href="/">Latest brief</Link><Link href="/history">History</Link></nav>
+          <nav><Link href="/">This week</Link><Link href="/history">History</Link></nav>
         </header>
         <main>{children}</main>
       </body>

@@ -1,8 +1,8 @@
 import type { FetchLike } from "../types";
 
-export async function getJson<T>(url: string, fetchImpl: FetchLike = fetch): Promise<T> {
+export async function getJson<T>(url: string, fetchImpl: FetchLike = fetch, headers: Record<string, string> = {}): Promise<T> {
   const res = await fetchImpl(url, {
-    headers: { accept: "application/json", "user-agent": "dev-pulse/1.0" },
+    headers: { accept: "application/json", "user-agent": "dev-pulse/1.0", ...headers },
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${new URL(url).host}`);

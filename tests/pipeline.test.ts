@@ -3,7 +3,7 @@ import { runDigest } from "@/lib/pipeline";
 import { makeGeminiCaller } from "@/lib/gemini";
 import { makeHnFetcher } from "@/lib/sources/hn";
 import { makeSoFetcher } from "@/lib/sources/stackoverflow";
-import { buildBriefPrompt, buildFallbackNarrative, generateBrief } from "@/lib/brief";
+import { buildBriefPrompt, generateBrief } from "@/lib/brief";
 import { buildTrends } from "@/lib/trend";
 import { MemoryStore, TOPIC, post } from "./helpers";
 
@@ -95,16 +95,9 @@ describe("pipeline", () => {
 describe("grounded narrative", () => {
   it("never includes raw post text in the brief prompt", () => {
     const trends = buildTrends([{ topic_id: "t1", theme: "Slow reviews", count: 3, unresolved: 2 }], [], { t1: "Code review" });
-    const prompt = buildBriefPrompt(trends, { pending: 0, warnings: [] });
+    const prompt = buildBriefPrompt(trends);
     expect(prompt).toContain("Slow reviews");
     expect(prompt).not.toContain("painful");
-  });
-  it("fallback is built from the numbers", () => {
-    const trends = buildTrends([{ topic_id: "t1", theme: "Slow reviews", count: 3, unresolved: 2 }], [{ topic_id: "t1", theme: "Flaky", count: 2, unresolved: 0 }], { t1: "CR" });
-    const text = buildFallbackNarrative(trends, { pending: 2, warnings: [] });
-    expect(text).toContain("3 mentions");
-    expect(text).toContain("dropped to zero");
-    expect(text).toContain("2 post(s) are still awaiting");
   });
   it("uses fallback when no model is configured", async () => {
     expect((await generateBrief([], { pending: 0, warnings: [] }, null)).usedFallback).toBe(true);

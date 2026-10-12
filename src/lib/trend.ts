@@ -1,8 +1,8 @@
 import type { Direction, ThemeCount, ThemeTrend } from "./types";
 import { OTHER_THEME } from "./types";
 
-/** A theme counts as "unresolved" when at least this share of its mentions are unresolved. */
-export const UNRESOLVED_SHARE_THRESHOLD = 0.5;
+/** "Mostly unresolved" means MORE than half of a theme's mentions are unresolved. */
+export const isMostlyUnresolved = (count: number, unresolved: number) => count > 0 && unresolved * 2 > count;
 
 export function computeTrend(current: number, previous: number): { direction: Direction; pct: number | null } {
   if (previous === 0 && current === 0) return { direction: "flat", pct: 0 };
@@ -46,7 +46,7 @@ export function buildTrends(
       direction,
       pct,
       unresolved_count: unresolvedCount,
-      unresolved: count > 0 && unresolvedCount / count >= UNRESOLVED_SHARE_THRESHOLD,
+      unresolved: isMostlyUnresolved(count, unresolvedCount),
     });
   }
   return trends.sort((a, b) => b.count - a.count || b.previous - a.previous || a.theme.localeCompare(b.theme));

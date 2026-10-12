@@ -47,7 +47,7 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
 
     async getExistingKeys(posts) {
       const keys = new Set<string>();
-      for (const source of ["hn", "stackoverflow"]) {
+      for (const source of new Set(posts.map((p) => p.source))) {
         const ids = posts.filter((p) => p.source === source).map((p) => p.source_id);
         for (const part of chunk(ids, 200)) {
           const rows = ok(await db.from("raw_posts").select("source_id").eq("source", source).in("source_id", part), "existing keys");

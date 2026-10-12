@@ -19,3 +19,9 @@ export function windowFor(asOf: Date): FetchWindow {
     prevWeekStart: isoDate(startMs - 7 * DAY),
   };
 }
+
+/** Window for a stored week_start (YYYY-MM-DD): 7 whole UTC days. */
+export function windowForWeekStart(weekStart: string): { start: Date; end: Date } {
+  const start = new Date(`${weekStart}T00:00:00Z`);
+  return { start, end: new Date(start.getTime() + 7 * DAY) };
+}

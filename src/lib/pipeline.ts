@@ -1,4 +1,4 @@
-import type { FetchedPost, ModelCaller, SourceFetcher, StoredPost, ThemeTrend, Topic } from "./types";
+import type { FetchedPost, ModelCaller, Source, SourceFetcher, StoredPost, ThemeTrend, Topic } from "./types";
 import type { Store } from "./store";
 import { windowFor } from "./week";
 import { matchesKeywords } from "./matching";
@@ -9,7 +9,7 @@ import { generateBrief } from "./brief";
 
 export interface Deps {
   store: Store;
-  fetchers: { hn: SourceFetcher; stackoverflow: SourceFetcher };
+  fetchers: Partial<Record<Source, SourceFetcher>>;
   /** null when Gemini is not configured: classification is skipped and the brief uses the fallback */
   callModel: ModelCaller | null;
   sendEmail?: (args: { weekStart: string; narrative: string; points: ThemeTrend[] }) => Promise<"sent" | "skipped">;
@@ -41,10 +41,9 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
   const topicNames = Object.fromEntries(topics.map((t) => [t.id, t.name]));
 
   // 3. fetch every (topic, source) independently; one dead source never blocks the others
-  const jobs = topics.flatMap((t) =>
-    (["hn", "stackoverflow"] as const).map((src) => ({ t, src })),
-  );
-  const settled = await Promise.allSettled(jobs.map(({ t, src }) => fetchers[src](t, window)));
+  const sources = Object.keys(fetchers) as Source[];
+  const jobs = topics.flatMap((t) => sources.map((src) => ({ t, src })));
+  const settled = await Promise.allSettled(jobs.map(({ t, src }) => fetchers[src]!(t, window)));
   const fetchedPosts: FetchedPost[] = [];
   settled.forEach((r, i) => {
     const { t, src } = jobs[i];
@@ -98,7 +97,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
   await store.saveAggregates(window.weekStart, current);
 
   // 9-10. narrative (grounded in aggregates only), save, email
-  const points = rankPainPoints(trends, 10);
+  const points = rankPainPoints(trends, 40); // dashboard shows all; the email caps itself
   const { narrative, usedFallback } = await generateBrief(trends, { pending, warnings }, callModel);
   await store.saveBrief(window.weekStart, narrative, points);
 

@@ -4,6 +4,8 @@ import { runDigest } from "@/lib/pipeline";
 import { makeSupabaseStore } from "@/lib/store";
 import { makeHnFetcher } from "@/lib/sources/hn";
 import { makeSoFetcher } from "@/lib/sources/stackoverflow";
+import { makeRedditFetcher } from "@/lib/sources/reddit";
+import { makeGithubFetcher } from "@/lib/sources/github";
 import { geminiFromEnv } from "@/lib/gemini";
 import { sendBriefEmail } from "@/lib/email";
 
@@ -38,7 +40,12 @@ export async function GET(req: Request) {
   try {
     const summary = await runDigest({
       store: makeSupabaseStore(),
-      fetchers: { hn: makeHnFetcher(), stackoverflow: makeSoFetcher(fetch, process.env.STACKEXCHANGE_KEY) },
+      fetchers: {
+        hn: makeHnFetcher(),
+        stackoverflow: makeSoFetcher(fetch, process.env.STACKEXCHANGE_KEY),
+        reddit: makeRedditFetcher(),
+        github: makeGithubFetcher(fetch, process.env.GITHUB_TOKEN),
+      },
       callModel,
       // backfills (asOf) must not email Sumit a stale brief
       sendEmail: asOfParam ? undefined : (args) => sendBriefEmail(args),

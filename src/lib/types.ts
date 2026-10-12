@@ -1,4 +1,5 @@
-export type Source = "hn" | "stackoverflow";
+export type Source = "hn" | "stackoverflow" | "reddit" | "github";
+export const SOURCES: Source[] = ["hn", "stackoverflow", "reddit", "github"];
 export type Sentiment = "negative" | "neutral" | "positive";
 export type Direction = "up" | "down" | "flat" | "new";
 

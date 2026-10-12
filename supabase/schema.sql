@@ -12,7 +12,7 @@ create table if not exists topics (
 
 create table if not exists raw_posts (
   id uuid primary key default gen_random_uuid(),
-  source text not null check (source in ('hn', 'stackoverflow')),
+  source text not null check (source in ('hn', 'stackoverflow', 'reddit', 'github')),
   source_id text not null,
   topic_id uuid references topics(id) on delete cascade,
   title text not null default '',

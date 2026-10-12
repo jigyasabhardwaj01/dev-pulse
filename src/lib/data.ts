@@ -1,5 +1,6 @@
 import { supabaseFromEnv } from "./store";
 import type { ThemeTrend } from "./types";
+import { windowForWeekStart } from "./week";
 
 export interface BriefRow {
   week_start: string;
@@ -49,4 +50,31 @@ export async function getHistory(maxSeries = 8): Promise<HistoryData> {
     return row;
   });
   return { series, rows };
+}
+
+export interface PostRow {
+  id: string;
+  source: string;
+  title: string;
+  body: string;
+  url: string | null;
+  author: string | null;
+  posted_at: string;
+  unresolved: boolean | null;
+  sentiment: string | null;
+}
+
+/** The underlying posts behind one (week, topic, theme) count. */
+export async function getPostsFor(topicId: string, theme: string, weekStart: string): Promise<{ posts: PostRow[]; topicName: string }> {
+  const { start, end } = windowForWeekStart(weekStart);
+  const db = supabaseFromEnv();
+  const [posts, topic] = await Promise.all([
+    db.from("raw_posts").select("id, source, title, body, url, author, posted_at, unresolved, sentiment")
+      .eq("topic_id", topicId).eq("theme", theme)
+      .gte("posted_at", start.toISOString()).lt("posted_at", end.toISOString())
+      .order("posted_at", { ascending: false }).limit(200),
+    db.from("topics").select("name").eq("id", topicId).maybeSingle(),
+  ]);
+  if (posts.error) throw new Error(posts.error.message);
+  return { posts: (posts.data ?? []) as PostRow[], topicName: (topic.data?.name as string) ?? "" };
 }

@@ -1,16 +1,8 @@
-import { getLatestBrief } from "@/lib/data";
-import type { ThemeTrend } from "@/lib/types";
+import GroupedPainPoints from "@/components/GroupedPainPoints";
+import TrendChart from "@/components/TrendChart";
+import { getHistory, getLatestBrief } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
-
-function trendLabel(t: ThemeTrend) {
-  switch (t.direction) {
-    case "new": return "▲ new";
-    case "up": return `▲ ${t.pct}%`;
-    case "down": return `▼ ${Math.abs(t.pct ?? 0)}%`;
-    default: return "– flat";
-  }
-}
 
 export default async function Home() {
   let brief = null;
@@ -30,24 +22,25 @@ export default async function Home() {
     );
   }
 
+  let history = null;
+  try {
+    history = await getHistory();
+  } catch {
+    /* chart is optional */
+  }
+
   return (
     <>
-      <h1>Developer pain points</h1>
-      <p className="sub">Week of {brief.week_start} · generated {new Date(brief.created_at).toUTCString()}</p>
-      <section className="card" aria-label="Summary">
-        {brief.narrative.split(/\n{2,}/).map((p, i) => <p key={i}>{p}</p>)}
-      </section>
-      <h2>Ranked pain points</h2>
-      <ol className="points">
-        {brief.top_pain_points.map((t) => (
-          <li key={`${t.topic_id}-${t.theme}`}>
-            <span className="theme"><span className="topic">{t.topic_name}</span>{t.theme}</span>
-            <span className="count">{t.count} this wk · {t.previous} last wk</span>
-            <span className={`trend ${t.direction}`}>{trendLabel(t)}</span>
-            {t.unresolved && <span className="badge">unresolved</span>}
-          </li>
-        ))}
-      </ol>
+      <h1>Week of {brief.week_start}</h1>
+      <p className="sub">Generated {new Date(brief.created_at).toUTCString()}</p>
+      <p className="intro">{brief.narrative}</p>
+      <GroupedPainPoints points={brief.top_pain_points} weekStart={brief.week_start} />
+      {history && history.rows.length > 1 && (
+        <>
+          <h2>Mentions over time</h2>
+          <TrendChart series={history.series} rows={history.rows} />
+        </>
+      )}
     </>
   );
 }
