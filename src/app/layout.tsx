@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <TopBar />
             <main id="main" className="page">{children}</main>
             <footer className="footer">
-              <p>Sources: Hacker News, Stack Overflow, Reddit and GitHub Issues. Themes are assigned by Gemini Flash from a fixed list per topic.</p>
+              <p>Sources: Hacker News, Stack Overflow, Reddit and GitHub Issues. Themes are assigned by a Google Gemini Flash model (via OpenRouter) from a fixed list per topic.</p>
               <p>A reporting week is the seven complete days from Friday 00:00 to Thursday 23:59 IST. Trends are shown only when source coverage matches the previous week.</p>
             </footer>
           </div>

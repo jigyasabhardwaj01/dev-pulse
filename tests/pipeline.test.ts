@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { runDigest } from "@/lib/pipeline";
-import { makeGeminiCaller } from "@/lib/gemini";
 import { makeHnFetcher } from "@/lib/sources/hn";
 import { makeSoFetcher } from "@/lib/sources/stackoverflow";
 import { buildBriefPrompt, generateBrief } from "@/lib/brief";
@@ -153,19 +152,3 @@ describe("source adapters (mocked fetch)", () => {
   });
 });
 
-describe("gemini caller", () => {
-  it("retries 429 then succeeds, sends the key in a header", async () => {
-    const f = vi.fn()
-      .mockResolvedValueOnce(new Response("", { status: 429 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "hi" }] } }] })));
-    const call = makeGeminiCaller({ apiKey: "k", model: "m", fetchImpl: f, retryDelayMs: 1 });
-    expect(await call("p")).toBe("hi");
-    expect(f).toHaveBeenCalledTimes(2);
-    expect((f.mock.calls[0][1] as RequestInit).headers).toMatchObject({ "x-goog-api-key": "k" });
-    expect(String(f.mock.calls[0][0])).toContain("/models/m:generateContent");
-  });
-  it("throws after exhausting retries and on empty output", async () => {
-    await expect(makeGeminiCaller({ apiKey: "k", model: "m", fetchImpl: async () => new Response("", { status: 503 }), retryDelayMs: 1 })("p")).rejects.toThrow("503");
-    await expect(makeGeminiCaller({ apiKey: "k", model: "m", fetchImpl: async () => new Response(JSON.stringify({ candidates: [] })), retryDelayMs: 1 })("p")).rejects.toThrow("empty");
-  });
-});

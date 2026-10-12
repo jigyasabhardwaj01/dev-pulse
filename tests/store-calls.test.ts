@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { EMAIL_KEY_SAFE_MS, EMAIL_LEASE_MS, makeSupabaseStore } from "@/lib/store";
-import { geminiFromEnv } from "@/lib/gemini";
 import type { BriefDraft } from "@/lib/brief-policy";
 
 /**
@@ -227,14 +226,3 @@ describe("store: run health and error handling", () => {
   });
 });
 
-describe("Gemini model guard: every AI task must use a Flash model", () => {
-  const env = (model?: string, key = "k") => ({ GEMINI_API_KEY: key, ...(model ? { GEMINI_MODEL: model } : {}) }) as unknown as NodeJS.ProcessEnv;
-  it("accepts Flash ids (any version, any case) and nothing else", () => {
-    for (const m of ["gemini-3.8-flash", "gemini-3.5-flash-lite", "Gemini-2.5-FLASH"]) expect(() => geminiFromEnv(env(m))).not.toThrow();
-    for (const m of ["gemini-3.1-pro", "claude-opus-5-5", "gpt-5", "gemini-ultra"]) expect(() => geminiFromEnv(env(m))).toThrow(/not a Gemini Flash model/);
-  });
-  it("requires both the key and the model from the environment (no hard-coded default)", () => {
-    expect(() => geminiFromEnv(env("gemini-3.8-flash", ""))).toThrow(/GEMINI_API_KEY/);
-    expect(() => geminiFromEnv(env(undefined))).toThrow(/GEMINI_MODEL is not set/);
-  });
-});

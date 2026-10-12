@@ -76,7 +76,7 @@ const runDigest = vi.fn(async (d: { trigger?: string }) => ({ status: "succeeded
 const hasActiveRun = vi.fn(async (_w: string, _ms: number) => false);
 vi.mock("@/lib/pipeline", () => ({ runDigest: (d: never) => runDigest(d) }));
 vi.mock("@/lib/store", () => ({ makeSupabaseStore: () => ({ hasActiveRun }) }));
-vi.mock("@/lib/gemini", () => ({ geminiFromEnv: () => async () => "x" }));
+vi.mock("@/lib/openrouter", () => ({ openRouterFromEnv: () => async () => "x" }));
 vi.mock("@/lib/email", () => ({ sendBriefEmail: vi.fn(async () => "sent") }));
 
 describe("route handler /api/cron/weekly-digest", async () => {

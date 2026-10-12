@@ -38,7 +38,7 @@ export type SendResult = "sent" | "skipped" | { status: "sent"; messageId?: stri
 export interface Deps {
   store: Store;
   fetchers: Partial<Record<Source, SourceFetcher>>;
-  /** null when Gemini is not configured: classification is skipped and the brief uses the fallback */
+  /** null when the AI provider is not configured: classification is skipped and the brief uses the fallback */
   callModel: ModelCaller | null;
   sendEmail?: (args: EmailArgs) => Promise<SendResult>;
   /** Backfills never email, even if a sender is supplied. Defaults to "scheduled". */
@@ -296,7 +296,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     let backlogRemaining = unclassified.length - pending;
     const classifyCutoff = t0 + budget - FINALIZE_RESERVE_MS;
     if (unclassified.length && !callModel) {
-      diag.add({ code: "CLASSIFY_NO_MODEL", severity: "error", stage: "classify", message: `Classification was skipped because no Gemini key is configured; ${unclassified.length} posts stay unclassified.`, detail: { waiting: unclassified.length } }, "GEMINI not configured: classification skipped");
+      diag.add({ code: "CLASSIFY_NO_MODEL", severity: "error", stage: "classify", message: `Classification was skipped because no OpenRouter API key is configured; ${unclassified.length} posts stay unclassified.`, detail: { waiting: unclassified.length } }, "GEMINI not configured: classification skipped");
     } else if (unclassified.length && callModel) {
       for (const phase of ["current", "earlier"] as const) {
         for (const topic of topics) {

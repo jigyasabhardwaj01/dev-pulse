@@ -3,7 +3,7 @@
 Current as of the backend completion sprint. Everything here describes code in this repo; items marked *unverified* have not been run against a real database or provider.
 
 Live site: https://dev-pulse-omega-pink.vercel.app.
-Stack: Next.js (App Router) on Vercel, Supabase (Postgres), Gemini Flash, Resend. Free tiers only.
+Stack: Next.js (App Router) on Vercel, Supabase (Postgres), OpenRouter (Google Gemini Flash models only), Resend. Free tiers only.
 
 ## 1. What it does
 
@@ -116,7 +116,7 @@ Each run stores diagnostics (stable `code`, `severity`, `stage`, a safe message 
 
 ## 15. Environment variables (names only; values live in Vercel's protected settings)
 
-Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side only), `GEMINI_API_KEY`, `GEMINI_MODEL` (a Flash model id), `RESEND_API_KEY`, `DIGEST_TO_EMAIL` (single recipient), `APP_URL` (dashboard link in the email), `CRON_SECRET` (cron authentication). Optional: `STACKEXCHANGE_KEY`, `GITHUB_TOKEN`, `REDDIT_USER_AGENT`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`. The Supabase tables have row-level security enabled with no policies, so the public anon/publishable key can read and write nothing (verified: every table returns an empty result and writes are rejected).
+Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side only), `OPENROUTER_API_KEY`, optional `OPENROUTER_MODEL` (a `google/` model id; default `google/gemini-3.7-flash`), `RESEND_API_KEY`, `DIGEST_TO_EMAIL` (single recipient), `APP_URL` (dashboard link in the email), `CRON_SECRET` (cron authentication). Optional: `STACKEXCHANGE_KEY`, `GITHUB_TOKEN`, `REDDIT_USER_AGENT`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`. The Supabase tables have row-level security enabled with no policies, so the public anon/publishable key can read and write nothing (verified: every table returns an empty result and writes are rejected).
 
 ## 16. JARVIS 2.0: watchlist, classification, checkpoints, analysis
 
@@ -135,3 +135,12 @@ Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side onl
 - **Failure alerts**: scheduled runs only; run failed, email failed/unconfirmed, or every source down. One per kind and week (`alert_log` unique key), at most 3 per kind per 24 h, codes only, to `DIGEST_TO_EMAIL` from the approved sender. An alert error never fails the run.
 - **Migrations** (additive, applied in order): 006 JARVIS 2.0 tables and columns, 007 checkpoint range, 008 `record_review_decision`. Recovery notes are at the top of each file; nothing existing is altered.
 - **New env var names**: `SESSION_SECRET`, `JARVIS_OWNER_EMAIL` (optional), `JARVIS_TEAM_EMAILS`.
+
+## 18. AI inference: OpenRouter, Google models only
+
+- Every AI call (classification and the Friday summary) goes through `src/lib/openrouter.ts`: `POST https://openrouter.ai/api/v1/chat/completions` with `Authorization: Bearer $OPENROUTER_API_KEY`. There is no direct Google call path any more.
+- Model: `OPENROUTER_MODEL`, default `google/gemini-3.7-flash`. Only plain `google/<model>` ids are accepted (no other vendor, no `:nitro`/`:floor` variants). Verified present in `GET /api/v1/models` on 2026-10-12 with endpoints on Google AI Studio and Google Vertex.
+- Routing: `provider: { order: ["google-ai-studio","google-vertex"], only: [same], allow_fallbacks: false, require_parameters: true }`. If Google cannot serve a request (HTTP 404 "no endpoints"), the call fails; it is never relaxed to another vendor. A response whose model or provider is not Google is discarded.
+- Retries: at most 3 attempts for 408/429/5xx/network errors with back-off (Retry-After honoured, capped, and never past the run's deadline). 401/403 (bad key) and 402 (no credit) stop immediately and trip a breaker so the rest of the run makes no further requests; the run then reports `CLASSIFY_ABORTED` and the posts stay unclassified for the next run.
+- Usage (model, provider, latency, tokens, cost when OpenRouter returns it) is available per call through `onResult`.
+- Live check: `LIVE_AI=1 OPENROUTER_API_KEY=... npx vitest run tests/live-openrouter.dev.test.ts`. The key must be a rotated one set in Vercel's protected settings; never commit it.

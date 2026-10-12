@@ -22,7 +22,7 @@ const inPeriod = (h: number) => new Date(PERIOD.start.getTime() + h * 3_600_000)
 const store = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock("@/lib/store", async (orig) => ({ ...(await orig<typeof import("@/lib/store")>()), makeSupabaseStore: () => store.current }));
 const model = vi.hoisted(() => ({ fn: null as null | ((p: string) => Promise<string>) }));
-vi.mock("@/lib/gemini", () => ({ geminiFromEnv: () => model.fn }));
+vi.mock("@/lib/openrouter", () => ({ openRouterFromEnv: () => model.fn }));
 
 const goodModel = async (prompt: string) => {
   if (prompt.includes("intro line")) {

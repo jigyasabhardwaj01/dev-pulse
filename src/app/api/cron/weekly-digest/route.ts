@@ -6,7 +6,7 @@ import { makeHnFetcher } from "@/lib/sources/hn";
 import { makeSoFetcher } from "@/lib/sources/stackoverflow";
 import { makeRedditFetcher } from "@/lib/sources/reddit";
 import { makeGithubFetcher } from "@/lib/sources/github";
-import { geminiFromEnv } from "@/lib/gemini";
+import { openRouterFromEnv } from "@/lib/openrouter";
 import { sendBriefEmail } from "@/lib/email";
 import { ACTIVE_RUN_WINDOW_MS, planRun } from "@/lib/run-plan";
 import { periodFor } from "@/lib/week";
@@ -44,9 +44,9 @@ export async function GET(req: Request) {
 
   let callModel = null;
   try {
-    callModel = geminiFromEnv();
+    callModel = openRouterFromEnv();
   } catch (e) {
-    console.error("gemini unavailable:", (e as Error).message);
+    console.error("ai unavailable:", sanitizeError(e));
   }
 
   let store: ReturnType<typeof makeSupabaseStore>;

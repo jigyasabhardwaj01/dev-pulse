@@ -24,7 +24,7 @@ export default function Sidebar() {
       <div className="side-foot">
         <strong>Reporting week</strong>
         <span>Seven complete days, Friday 00:00 to Thursday 23:59 IST.</span>
-        <span>Themes assigned by Gemini Flash.</span>
+        <span>Themes assigned by Gemini Flash via OpenRouter.</span>
       </div>
     </aside>
   );
