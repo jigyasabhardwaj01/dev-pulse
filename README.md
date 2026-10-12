@@ -12,7 +12,7 @@ Sources: Hacker News, Stack Overflow, Reddit, GitHub Issues. Free tiers only: Ve
 
 ```mermaid
 flowchart TD
-  Cron["Vercel Cron<br/>Fri 03:30 UTC (09:00 IST)<br/>vercel.json"] -->|"GET + Bearer CRON_SECRET"| Route["/api/cron/weekly-digest<br/>route.ts (fails closed)"]
+  Cron["Vercel Cron<br/>Fri 00:30 UTC (06:00 IST)<br/>vercel.json"] -->|"GET + Bearer CRON_SECRET"| Route["/api/cron/weekly-digest<br/>route.ts (fails closed)"]
   Route --> Pipe["pipeline.ts runDigest()"]
 
   Topics[("Supabase: topics<br/>keywords, canonical_themes, tags<br/>edited in dashboard, no redeploy")] --> Pipe

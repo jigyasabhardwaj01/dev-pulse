@@ -12,7 +12,7 @@ const owner: Session = { email: "owner@team.test", role: "owner" };
 const member: Session = { email: "a@team.test", role: "member" };
 
 const term = (o: object) => ({ id: "w1", topic_id: "t1", term: "code review", kind: "include", status: "active", applies_to: null, matches: 5, activity: "producing", scopeLabel: null, ...o });
-const watchView = () => ({
+const watchView = (): any => ({
   sensitivity: "balanced",
   topics: [{ id: "t1", name: "Code review", legacy: false, legacyKeywords: [], includes: [term({}), term({ id: "w2", term: "build", activity: "none", matches: 0 }), term({ id: "w3", term: "pr queue", status: "paused", activity: "paused" })], excludes: [term({ id: "x1", term: "meme", kind: "exclude", applies_to: "w1", scopeLabel: "code review", matches: 2 })] }],
   changes: [{ id: 1, at: "2026-10-12T05:00:00Z", actor: "owner@team.test", action: "add", subject: "include:build", before: null, after: null }],
