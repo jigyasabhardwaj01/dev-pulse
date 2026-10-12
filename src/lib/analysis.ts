@@ -92,7 +92,8 @@ export const TOP_N = 3;
 /** To be ranked in the top list a pain point needs at least this many distinct discussions and one verified supporting excerpt. */
 export const TOP_MIN_DISCUSSIONS = 2;
 
-const key = (c: { topic_id: string; theme: string }) => `${c.topic_id}\u0000${c.theme}`;
+// "|" not NUL: this key is stored inside the sealed analysis (jsonb), which cannot hold U+0000. topic_id is a uuid, so it is unambiguous.
+const key = (c: { topic_id: string; theme: string }) => `${c.topic_id}|${c.theme}`;
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const round = (n: number, d = 3) => Math.round(n * 10 ** d) / 10 ** d;
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));

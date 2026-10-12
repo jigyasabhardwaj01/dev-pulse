@@ -1,5 +1,6 @@
 import { supabaseFromEnv } from "./store";
 import type { ReportAnalysis } from "./analysis";
+import { stripNul } from "./json-safe";
 import type { Sensitivity, TermKind, TermStatus, WatchTerm } from "./watchlist";
 
 /* Persistence for everything the team touches: watchlist edits, review items, votes, decisions, packs and alerts. */
@@ -174,7 +175,7 @@ export function makeSupabaseTeamStore(db: Db = supabaseFromEnv()): TeamStore {
       return rows[0] ?? null;
     },
     async saveDerivedAnalysis(a) {
-      const res = await db.from("report_analyses").insert(a).select("*").single();
+      const res = await db.from("report_analyses").insert(stripNul(a)).select("*").single();
       if (res.error?.code === UNIQUE) return null;
       return ok(res, "save derived analysis") as DerivedAnalysis;
     },
