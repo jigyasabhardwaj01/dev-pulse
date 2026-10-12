@@ -169,16 +169,16 @@ describe("Monday pack page", async () => {
 
 describe("Sign-in page", async () => {
   const { default: SignIn } = await import("@/app/signin/page");
-  const page = async (q: object = {}) => html(await SignIn({ searchParams: Promise.resolve(q) }));
-  it("anonymous without a token: the email form", async () => { mocks.session = null; const o = await page(); expect(o).toContain("Email me a sign-in link"); expect(o).toContain('type="email"'); });
-  it("with a token: a POST confirmation form (the link alone does nothing)", async () => {
+  const page = async () => html(await SignIn());
+  it("anonymous: an email and passcode form, no email link flow", async () => {
     mocks.session = null;
-    const o = await page({ token: "abc.def" });
-    expect(o).toContain('method="post"'); expect(o).toContain('action="/api/auth/verify"'); expect(o).toContain("Confirm sign-in");
+    const o = await page();
+    expect(o).toContain('type="email"'); expect(o).toContain('type="password"'); expect(o).toContain("Passcode"); expect(o).toContain(">Sign in<");
+    expect(o).not.toContain("sign-in link"); expect(o).not.toContain("Email me");
   });
-  it("signed in: shows who and a sign-out form; errors are worded", async () => {
+  it("signed in: shows who and a sign-out form", async () => {
     mocks.session = member;
-    const o = await page({ error: "invalid" });
-    expect(o).toContain("a@team.test"); expect(o).toContain("Sign out"); expect(o).toContain("invalid, expired or already used");
+    const o = await page();
+    expect(o).toContain("a@team.test"); expect(o).toContain("Sign out"); expect(o).not.toContain('type="password"');
   });
 });

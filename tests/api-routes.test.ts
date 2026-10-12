@@ -21,13 +21,12 @@ import * as state from "@/app/api/review/items/[id]/state/route";
 import * as vote from "@/app/api/review/items/[id]/vote/route";
 import * as decision from "@/app/api/review/items/[id]/decision/route";
 import * as pack from "@/app/api/pack/route";
-import * as verify from "@/app/api/auth/verify/route";
-import * as authRequest from "@/app/api/auth/request/route";
+import * as loginRoute from "@/app/api/auth/login/route";
 import * as signout from "@/app/api/auth/signout/route";
 
 const SECRET = "test-secret-with-more-than-16-chars";
 const ORIGIN = "https://app.test";
-const env = { RESEND_API_KEY: "k", SESSION_SECRET: SECRET, DIGEST_TO_EMAIL: "owner@team.test", JARVIS_TEAM_EMAILS: "a@team.test", APP_URL: ORIGIN };
+const env = { OWNER_PASSCODE: "owner-pass-phrase-123", TEAM_PASSCODE: "team-pass-phrase-456", RESEND_API_KEY: "k", SESSION_SECRET: SECRET, DIGEST_TO_EMAIL: "owner@team.test", JARVIS_TEAM_EMAILS: "a@team.test", APP_URL: ORIGIN };
 const cookie = (email: string) => `${SESSION_COOKIE}=${sessionToken(email, SECRET, Date.now())}`;
 const req = (method: string, path: string, o: { who?: string; body?: unknown; origin?: string | null; ct?: string } = {}) =>
   new Request(`${ORIGIN}${path}`, { method, headers: { ...(o.origin === null ? {} : { origin: o.origin ?? ORIGIN }), "content-type": o.ct ?? "application/json", ...(o.who ? { cookie: cookie(o.who) } : {}) }, body: o.body === undefined ? undefined : JSON.stringify(o.body) });
@@ -133,75 +132,45 @@ describe("the owner's happy path through the real handlers", () => {
   });
 });
 
-describe("sign-in confirmation endpoint", () => {
-  it("does not accept GET (a mail scanner cannot use the link up)", () => {
-    expect((verify as Record<string, unknown>).GET).toBeUndefined();
-  });
-  it("rejects a cross-origin post and an invalid token without setting a cookie", async () => {
-    const mk = (origin: string, token: string) => { const f = new FormData(); f.set("token", token); return new Request(`${ORIGIN}/api/auth/verify`, { method: "POST", headers: { origin }, body: f }); };
-    const a = await verify.POST(mk("https://evil.test", "x"));
-    const b = await verify.POST(mk(ORIGIN, "x.y"));
-    for (const r of [a, b]) { expect(r.status).toBe(303); expect(r.headers.get("set-cookie")).toBeNull(); expect(r.headers.get("location")).toContain("/signin?error="); }
-  });
-  it("a valid single-use link sets an httpOnly session cookie and redirects to /review; replay fails", async () => {
-    const { linkToken, newNonce } = await import("@/lib/auth");
-    const nonce = newNonce();
-    await t.store.createToken(nonce, "a@team.test", new Date(Date.now() + 600_000));
-    const token = linkToken("a@team.test", nonce, SECRET, Date.now());
-    const mk = () => { const f = new FormData(); f.set("token", token); return new Request(`${ORIGIN}/api/auth/verify`, { method: "POST", headers: { origin: ORIGIN }, body: f }); };
-    const ok = await verify.POST(mk());
-    expect(ok.headers.get("location")).toBe(`${ORIGIN}/review`);
-    const sc = ok.headers.get("set-cookie") ?? "";
-    expect(sc).toMatch(/HttpOnly/); expect(sc).toMatch(/SameSite=Lax/); expect(sc).toMatch(/Secure/);
-    expect((await verify.POST(mk())).headers.get("set-cookie")).toBeNull();
-  });
-});
-
-describe("the whole magic-link journey through the real route handlers", () => {
-  it("request -> emailed link -> confirmation page POST -> session cookie -> authorised call -> sign out", async () => {
-    const sent: { to: string[]; html: string }[] = [];
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (_u: unknown, i: RequestInit) => { const b = JSON.parse(String(i.body)); sent.push({ to: b.to, html: b.html }); return new Response("{}", { status: 200 }); }) as never;
+describe("passcode sign-in through the real route handlers", () => {
+  const post = (body: unknown, o: { origin?: string | null; ct?: string } = {}) => loginRoute.POST(new Request(`${ORIGIN}/api/auth/login`, { method: "POST", headers: { ...(o.origin === null ? {} : { origin: o.origin ?? ORIGIN }), "content-type": o.ct ?? "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) }));
+  it("a correct sign-in sets an httpOnly, SameSite, Secure session cookie that authorises exactly that person; sign-out clears it", async () => {
+    const sent: unknown[] = []; const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (...a: unknown[]) => { sent.push(a); return new Response("{}"); }) as never;
     try {
-      // 1. ask for a link
-      const asked = await authRequest.POST(req("POST", "/api/auth/request", { body: { email: "A@Team.test" } }));
-      expect(asked.status).toBe(200);
-      expect(sent).toHaveLength(1);
-      expect(sent[0].to).toEqual(["a@team.test"]);
-      // 2. the emailed link opens the /signin page (a GET), which only SHOWS a confirm button: nothing is consumed by opening it
-      const link = /href="([^"]+)"/.exec(sent[0].html)![1];
-      expect(link.startsWith(`${ORIGIN}/signin?token=`)).toBe(true);
-      expect([...t.state.tokens.values()].every((x) => !x.used)).toBe(true);
-      // 3. the confirm button POSTs the token; GET on that endpoint is intentionally not supported (405), a mail scanner cannot burn it
-      const token = new URL(link).searchParams.get("token")!;
-      const f = new FormData(); f.set("token", token);
-      const done = await verify.POST(new Request(`${ORIGIN}/api/auth/verify`, { method: "POST", headers: { origin: ORIGIN }, body: f }));
-      expect(done.status).toBe(303);
-      expect(done.headers.get("location")).toBe(`${ORIGIN}/review`);
-      const setCookie = done.headers.get("set-cookie")!;
-      const session = /jarvis_session=([^;]+)/.exec(setCookie)![1];
-      // 4. the cookie authorises exactly this person, as a member
-      const post = (path: string, body: unknown) => new Request(`${ORIGIN}${path}`, { method: "POST", headers: { origin: ORIGIN, "content-type": "application/json", cookie: `jarvis_session=${session}` }, body: JSON.stringify(body) });
-      expect((await items.POST(post("/api/review/items", { weekStart: "2026-10-09", topicId: "t1", theme: "Slow reviews", reason: "why" }))).status).toBe(201);
+      const r = await post({ email: "A@Team.test", passcode: "team-pass-phrase-456" });
+      expect(r.status).toBe(200);
+      expect(sent).toHaveLength(0); // no email of any kind
+      const sc = r.headers.get("set-cookie")!;
+      expect(sc).toMatch(/HttpOnly/); expect(sc).toMatch(/SameSite=Lax/); expect(sc).toMatch(/Secure/);
+      const session = /jarvis_session=([^;]+)/.exec(sc)![1];
+      const call = (path: string, body: unknown) => new Request(`${ORIGIN}${path}`, { method: "POST", headers: { origin: ORIGIN, "content-type": "application/json", cookie: `jarvis_session=${session}` }, body: JSON.stringify(body) });
+      expect((await items.POST(call("/api/review/items", { weekStart: "2026-10-09", topicId: "t1", theme: "Slow reviews", reason: "why" }))).status).toBe(201);
       expect(t.state.items[0].created_by).toBe("a@team.test");
-      expect((await terms.POST(post("/api/watchlist/terms", { topicId: "t1", term: "x y", kind: "include" }))).status).toBe(403);
-      // 5. the same link cannot be used twice
-      const f2 = new FormData(); f2.set("token", token);
-      const replay = await verify.POST(new Request(`${ORIGIN}/api/auth/verify`, { method: "POST", headers: { origin: ORIGIN }, body: f2 }));
-      expect(replay.headers.get("set-cookie")).toBeNull();
-      expect(replay.headers.get("location")).toContain("error=invalid");
-      // 6. sign out clears the cookie (and only for a same-origin request)
+      expect((await terms.POST(call("/api/watchlist/terms", { topicId: "t1", term: "x y", kind: "include" }))).status).toBe(403); // member, not owner
       const out = await signout.POST(new Request(`${ORIGIN}/api/auth/signout`, { method: "POST", headers: { origin: ORIGIN } }));
       expect(out.headers.get("set-cookie")).toMatch(/jarvis_session=;.*Max-Age=0/);
-      const cross = await signout.POST(new Request(`${ORIGIN}/api/auth/signout`, { method: "POST", headers: { origin: "https://evil.test" } }));
-      expect(cross.headers.get("set-cookie")).toBeNull();
+      expect((await signout.POST(new Request(`${ORIGIN}/api/auth/signout`, { method: "POST", headers: { origin: "https://evil.test" } }))).headers.get("set-cookie")).toBeNull();
     } finally { globalThis.fetch = realFetch; }
   });
-  it("sign-in is simply off (503) when the secret is not configured, and writes still need a session", async () => {
-    const old = process.env.SESSION_SECRET; delete process.env.SESSION_SECRET;
-    try {
-      expect((await authRequest.POST(req("POST", "/api/auth/request", { body: { email: "a@team.test" } }))).status).toBe(503);
-      expect((await pack.POST(req("POST", "/api/pack", { who: "owner@team.test" }))).status).toBe(401);
-    } finally { process.env.SESSION_SECRET = old; }
+  it("the owner passcode gives the owner role", async () => {
+    const r = await post({ email: "owner@team.test", passcode: "owner-pass-phrase-123" });
+    const session = /jarvis_session=([^;]+)/.exec(r.headers.get("set-cookie")!)![1];
+    const res = await terms.POST(new Request(`${ORIGIN}/api/watchlist/terms`, { method: "POST", headers: { origin: ORIGIN, "content-type": "application/json", cookie: `jarvis_session=${session}` }, body: JSON.stringify({ topicId: "t1", term: "build", kind: "include" }) }));
+    expect(res.status).toBe(201);
+  });
+  it("a wrong passcode is 401 with no cookie; cross-origin, non-JSON and malformed requests are refused", async () => {
+    const bad = await post({ email: "a@team.test", passcode: "wrong-wrong-wrong" });
+    expect(bad.status).toBe(401); expect(bad.headers.get("set-cookie")).toBeNull();
+    expect((await post({ email: "a@team.test", passcode: "team-pass-phrase-456" }, { origin: "https://evil.test" })).status).toBe(403);
+    expect((await post({ email: "a@team.test", passcode: "team-pass-phrase-456" }, { origin: null })).status).toBe(403);
+    expect((await post({ email: "a@team.test", passcode: "team-pass-phrase-456" }, { ct: "text/plain" })).status).toBe(403);
+    expect((await post("{nope")).status).toBe(400);
+  });
+  it("sign-in is off (503) when not configured, and the old email endpoints no longer exist", async () => {
+    const old = process.env.OWNER_PASSCODE; delete process.env.OWNER_PASSCODE;
+    try { expect((await post({ email: "a@team.test", passcode: "team-pass-phrase-456" })).status).toBe(503); } finally { process.env.OWNER_PASSCODE = old; }
+    await expect(import("@/app/api/auth/request/route" as string)).rejects.toThrow();
+    await expect(import("@/app/api/auth/verify/route" as string)).rejects.toThrow();
   });
 });

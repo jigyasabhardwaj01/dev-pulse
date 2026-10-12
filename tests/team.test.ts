@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { SESSION_COOKIE, cookieValue, linkToken, roleOf, rosterFromEnv, sameOrigin, sameOriginJson, sessionFrom, sessionToken, sign, verify } from "@/lib/auth";
-import { GENERIC_SENT, confirmLink, requestLink } from "@/lib/auth-flow";
+import { SESSION_COOKIE, cookieValue, passcodeMatches, roleOf, rosterFromEnv, sameOrigin, sameOriginJson, sessionFrom, sessionToken, sign, verify } from "@/lib/auth";
+import { REFUSED, login } from "@/lib/login";
 import { castVote, decide, decisionsDigest, setItemState, shortlist, tally, viewItem, withdrawVote, type PainPointLookup } from "@/lib/team";
 import { addTerm, editTerm, removeTerm, setSensitivity } from "@/lib/watch-service";
 import { buildPack, packFreshness } from "@/lib/pack";
@@ -10,7 +10,7 @@ import type { Session } from "@/lib/auth";
 import type { WatchTerm } from "@/lib/watchlist";
 
 const SECRET = "test-secret-with-more-than-16-chars";
-const ENV = { SESSION_SECRET: SECRET, DIGEST_TO_EMAIL: "Owner@Team.test", JARVIS_TEAM_EMAILS: "a@team.test, B@team.test,owner@team.test, not-an-email", RESEND_API_KEY: "k", APP_URL: "https://app.test/" } as unknown as NodeJS.ProcessEnv;
+const ENV = { OWNER_PASSCODE: "owner-pass-phrase-123", TEAM_PASSCODE: "team-pass-phrase-456", SESSION_SECRET: SECRET, DIGEST_TO_EMAIL: "Owner@Team.test", JARVIS_TEAM_EMAILS: "a@team.test, B@team.test,owner@team.test, not-an-email", RESEND_API_KEY: "k", APP_URL: "https://app.test/" } as unknown as NodeJS.ProcessEnv;
 const NOW = new Date("2026-10-16T05:00:00Z");
 const owner: Session = { email: "owner@team.test", role: "owner" };
 const a: Session = { email: "a@team.test", role: "member" };
@@ -46,8 +46,7 @@ describe("tokens and sessions", () => {
     expect(verify(`${body}.${sig}x`, SECRET, "s", NOW.getTime())).toBeNull();
     expect(verify(t, "another-secret-another-secret", "s", NOW.getTime())).toBeNull();
     expect(verify(t, SECRET, "s", NOW.getTime() + 8 * 24 * 3600_000)).toBeNull();
-    expect(verify(t, SECRET, "l", NOW.getTime())).toBeNull(); // a session is not a sign-in link
-    expect(verify(linkToken("a@team.test", "n", SECRET, NOW.getTime()), SECRET, "s", NOW.getTime())).toBeNull(); // nor a link a session
+    expect(verify(t, SECRET, "x" as never, NOW.getTime())).toBeNull(); // only the session kind exists
     expect(verify(t, undefined, "s", NOW.getTime())).toBeNull();
     expect(verify(t, "short", "s", NOW.getTime())).toBeNull();
     expect(verify("garbage", SECRET, "s", NOW.getTime())).toBeNull();
@@ -70,47 +69,58 @@ describe("tokens and sessions", () => {
   });
 });
 
-describe("magic-link sign-in", () => {
-  const sent = () => { const calls: { to: string[]; html: string }[] = []; const f = (async (_u: unknown, i: RequestInit) => { const b = JSON.parse(String(i.body)); calls.push({ to: b.to, html: b.html }); return new Response("{}", { status: 200 }); }) as never; return { calls, f }; };
-  const tokenFrom = (html: string) => decodeURIComponent(/token=([^"]+)"/.exec(html)![1]);
-
-  it("answers identically for roster and non-roster addresses, and only emails the roster", async () => {
-    const { store } = memoryTeamStore(); const x = sent();
-    const yes = await requestLink(store, "A@team.test", ENV, x.f, NOW);
-    const no = await requestLink(store, "stranger@x.test", ENV, x.f, NOW);
-    expect(yes).toEqual(no);
-    expect(yes.message).toBe(GENERIC_SENT);
-    expect(x.calls).toHaveLength(1);
-    expect(x.calls[0].to).toEqual(["a@team.test"]);
+describe("passcode sign-in (no email is sent)", () => {
+  const cookieOf = async (t: ReturnType<typeof memoryTeamStore>, email: string, pass: string, env = ENV) => { const r = await login(t.store, email, pass, env, NOW); return r; };
+  it("the owner signs in with the owner passcode, a member with the team passcode; the role comes from the roster", async () => {
+    const t = memoryTeamStore();
+    const o = await cookieOf(t, "Owner@Team.test", "owner-pass-phrase-123");
+    const m = await cookieOf(t, "a@team.test", "team-pass-phrase-456");
+    expect(o.status).toBe(200); expect(m.status).toBe(200);
+    expect(sessionFrom(`${SESSION_COOKIE}=${o.cookie}`, ENV, NOW.getTime())).toEqual({ email: "owner@team.test", role: "owner" });
+    expect(sessionFrom(`${SESSION_COOKIE}=${m.cookie}`, ENV, NOW.getTime())).toEqual({ email: "a@team.test", role: "member" });
   });
-  it("a link works exactly once", async () => {
-    const { store } = memoryTeamStore(); const x = sent();
-    await requestLink(store, "a@team.test", ENV, x.f, NOW);
-    const t = tokenFrom(x.calls[0].html);
-    const cookie = await confirmLink(store, t, ENV, NOW);
-    expect(cookie).toBeTruthy();
-    expect(sessionFrom(`${SESSION_COOKIE}=${cookie}`, ENV, NOW.getTime())?.email).toBe("a@team.test");
-    expect(await confirmLink(store, t, ENV, NOW)).toBeNull(); // replay
+  it("the team passcode never makes anyone an owner, and the owner passcode does not work for a member's address", async () => {
+    const t = memoryTeamStore();
+    expect((await cookieOf(t, "owner@team.test", "team-pass-phrase-456")).status).toBe(401);
+    expect((await cookieOf(t, "a@team.test", "owner-pass-phrase-123")).status).toBe(401);
   });
-  it("an expired link, a forged link and a link for someone removed from the roster all fail", async () => {
-    const { store } = memoryTeamStore(); const x = sent();
-    await requestLink(store, "a@team.test", ENV, x.f, NOW);
-    const t = tokenFrom(x.calls[0].html);
-    expect(await confirmLink(store, t, ENV, new Date(NOW.getTime() + 16 * 60_000))).toBeNull();
-    expect(await confirmLink(store, t + "x", ENV, NOW)).toBeNull();
-    expect(await confirmLink(store, t, { ...ENV, JARVIS_TEAM_EMAILS: "" } as never, NOW)).toBeNull();
+  it("every refusal is the same message: a stranger, a wrong passcode and a right passcode on the wrong address are indistinguishable", async () => {
+    const t = memoryTeamStore();
+    const a = await cookieOf(t, "stranger@x.test", "team-pass-phrase-456");
+    const b = await cookieOf(t, "a@team.test", "wrong-wrong-wrong");
+    expect(a).toEqual({ status: 401, message: REFUSED }); expect(b).toEqual(a);
+    expect(a.cookie).toBeUndefined();
   });
-  it("is bounded per address, validates input, and is off when not configured", async () => {
-    const { store } = memoryTeamStore(); const x = sent();
-    for (let i = 0; i < 6; i++) await requestLink(store, "a@team.test", ENV, x.f, NOW);
-    expect(x.calls).toHaveLength(3);
-    expect((await requestLink(store, "nope", ENV, x.f, NOW)).status).toBe(400);
-    expect((await requestLink(store, "a@team.test", { ...ENV, SESSION_SECRET: "" } as never, x.f, NOW)).status).toBe(503);
+  it("wrong attempts are bounded per address, and a correct passcode is refused while locked out", async () => {
+    const t = memoryTeamStore();
+    for (let i = 0; i < 5; i++) expect((await cookieOf(t, "a@team.test", `nope-nope-nope-${i}`)).status).toBe(401);
+    expect((await cookieOf(t, "a@team.test", "team-pass-phrase-456")).status).toBe(429);
+    expect((await cookieOf(t, "b@team.test", "team-pass-phrase-456")).status).toBe(200); // another address is unaffected
   });
-  it("a provider failure still gives the generic answer and leaks nothing", async () => {
-    const { store } = memoryTeamStore();
-    const r = await requestLink(store, "a@team.test", ENV, (async () => { throw new Error("boom key=sk-123"); }) as never, NOW);
-    expect(r).toEqual({ status: 200, message: GENERIC_SENT });
+  it("validates input and is off (503) unless a session secret and an owner passcode are configured", async () => {
+    const t = memoryTeamStore();
+    expect((await cookieOf(t, "nope", "x")).status).toBe(400);
+    expect((await cookieOf(t, "a@team.test", "")).status).toBe(400);
+    expect((await cookieOf(t, "a@team.test", 5 as never)).status).toBe(400);
+    expect((await cookieOf(t, "a@team.test", "x", { ...ENV, SESSION_SECRET: "" } as never)).status).toBe(503);
+    expect((await cookieOf(t, "owner@team.test", "short", { ...ENV, OWNER_PASSCODE: "short" } as never)).status).toBe(503);
+  });
+  it("a missing TEAM_PASSCODE means members cannot sign in, the owner still can", async () => {
+    const t = memoryTeamStore(); const env = { ...ENV, TEAM_PASSCODE: undefined } as never;
+    expect((await cookieOf(t, "a@team.test", "anything-anything", env)).status).toBe(401);
+    expect((await cookieOf(t, "owner@team.test", "owner-pass-phrase-123", env)).status).toBe(200);
+  });
+  it("a store failure is a clean 503, never a sign-in", async () => {
+    const t = memoryTeamStore(); t.store.countTokens = async () => { throw new Error("db down"); };
+    expect(await login(t.store, "a@team.test", "team-pass-phrase-456", ENV, NOW)).toMatchObject({ status: 503 });
+  });
+  it("passcode comparison is exact and ignores nothing", () => {
+    expect(passcodeMatches("abcdefghijkl", "abcdefghijkl")).toBe(true);
+    expect(passcodeMatches("abcdefghijkL", "abcdefghijkl")).toBe(false);
+    expect(passcodeMatches("abcdefghijkl ", "abcdefghijkl")).toBe(false);
+    expect(passcodeMatches("anything", undefined)).toBe(false);
+    expect(passcodeMatches("short", "short")).toBe(false); // too short counts as not configured
+    expect(passcodeMatches(undefined, "abcdefghijkl")).toBe(false);
   });
 });
 

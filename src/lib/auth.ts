@@ -1,9 +1,10 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /*
- * Sign-in for the review workflow. There are no passwords and no accounts table: a person is whoever the ROSTER (server
- * environment) names, and proves it by opening a single-use link sent to that address. The browser then holds an HMAC-signed,
- * httpOnly session cookie that carries only the email and an expiry. The ROLE is never stored in the cookie and never sent by
+ * Sign-in for the review workflow. No email is sent and there is no accounts table: a person is whoever the ROSTER (server
+ * environment) names, and proves it with the passcode for their role (OWNER_PASSCODE for the owner, TEAM_PASSCODE for members),
+ * both held only in the server environment. The browser then holds an HMAC-signed, httpOnly session cookie that carries only
+ * the email and an expiry. The ROLE is never stored in the cookie and never sent by
  * the client: it is derived from the roster on every request, so removing someone from the roster takes effect immediately.
  */
 export type Role = "owner" | "member";
@@ -12,9 +13,9 @@ export interface Session { email: string; role: Role }
 
 export const SESSION_COOKIE = "jarvis_session";
 export const SESSION_TTL_S = 7 * 24 * 3600;
-export const LINK_TTL_S = 15 * 60;
-export const LINKS_PER_WINDOW = 3;
-export const LINK_WINDOW_MS = 15 * 60_000;
+export const ATTEMPTS_PER_WINDOW = 5;
+export const ATTEMPT_WINDOW_MS = 15 * 60_000;
+export const MIN_PASSCODE = 12;
 
 const normEmail = (s: string) => s.trim().toLowerCase();
 const EMAIL = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/;
@@ -35,7 +36,7 @@ export function roleOf(email: string, roster: Roster): Role | null {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-type Payload = { k: "s" | "l"; e: string; x: number; n?: string };
+type Payload = { k: "s"; e: string; x: number };
 const b64 = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 const mac = (body: string, secret: string) => createHmac("sha256", secret).update(body).digest();
 
@@ -58,9 +59,7 @@ export function verify(token: unknown, secret: string | undefined, kind: Payload
   } catch { return null; }
 }
 
-export const newNonce = () => randomBytes(18).toString("base64url");
 export const sessionToken = (email: string, secret: string, nowMs: number) => sign({ k: "s", e: normEmail(email), x: Math.floor(nowMs / 1000) + SESSION_TTL_S }, secret);
-export const linkToken = (email: string, nonce: string, secret: string, nowMs: number) => sign({ k: "l", e: normEmail(email), n: nonce, x: Math.floor(nowMs / 1000) + LINK_TTL_S }, secret);
 
 export function cookieValue(header: string | null | undefined, name = SESSION_COOKIE): string | null {
   for (const part of (header ?? "").split(";")) {
@@ -102,4 +101,12 @@ export function sameOrigin(req: Request, env: NodeJS.ProcessEnv = process.env): 
   const allowed = new Set([new URL(req.url).origin]);
   if (env.APP_URL) { try { allowed.add(new URL(env.APP_URL).origin); } catch { /* ignore */ } }
   return allowed.has(origin);
+}
+
+/** Constant-time passcode comparison. A passcode shorter than MIN_PASSCODE is treated as not configured (sign-in stays off). */
+export function passcodeMatches(given: unknown, expected: string | undefined): boolean {
+  if (typeof given !== "string" || !expected || expected.length < MIN_PASSCODE) return false;
+  const a = createHmac("sha256", "jarvis-passcode").update(given).digest();
+  const b = createHmac("sha256", "jarvis-passcode").update(expected).digest();
+  return timingSafeEqual(a, b);
 }
