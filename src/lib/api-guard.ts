@@ -5,6 +5,7 @@ import { makeSupabaseStore } from "./store";
 import { sanitizeError } from "./text";
 import type { PainPointLookup } from "./team";
 import { analysisFor } from "./analysis-source";
+import { checkRate, clientKey, tooMany, WRITE_LIMIT, type Limit } from "./rate-limit";
 
 const NO_STORE = { "cache-control": "no-store" };
 export const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE });
@@ -14,9 +15,11 @@ export const json = (body: unknown, status = 200) => NextResponse.json(body, { s
  * same-origin JSON (CSRF), and that the actor is the visitor id cookie, never a name sent in the request body.
  */
 export async function guarded(
-  req: Request, _need: Role | "member", run: (s: Session, team: TeamStore, body: Record<string, unknown>) => Promise<Response>, opts: { body?: boolean } = {},
+  req: Request, _need: Role | "member", run: (s: Session, team: TeamStore, body: Record<string, unknown>) => Promise<Response>, opts: { body?: boolean; limit?: Limit } = {},
 ): Promise<Response> {
   if (!sameOriginJson(req)) return json({ error: "Request must come from this site as JSON." }, 403);
+  const rate = checkRate(opts.limit ?? WRITE_LIMIT, clientKey(req));
+  if (!rate.ok) return tooMany(rate.retryAfterSec);
   // No login: any visitor may write. A visitor id (cookie) identifies the browser for "one vote per person" and the audit trail.
   const existing = cookieValue(req.headers.get("cookie"));
   const id = existing && visitorFrom(null, existing) ? existing : newVisitorId();

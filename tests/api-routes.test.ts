@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryTeamStore } from "./team-helpers";
 import { VISITOR_COOKIE } from "@/lib/auth";
+import { resetRateLimits } from "@/lib/rate-limit";
 
 const mem = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock("@/lib/team-store", async (orig) => ({ ...(await orig<typeof import("@/lib/team-store")>()), makeSupabaseTeamStore: () => mem.current }));
@@ -20,7 +21,6 @@ import * as items from "@/app/api/review/items/route";
 import * as state from "@/app/api/review/items/[id]/state/route";
 import * as vote from "@/app/api/review/items/[id]/vote/route";
 import * as decision from "@/app/api/review/items/[id]/decision/route";
-import * as pack from "@/app/api/pack/route";
 import * as itemRoute from "@/app/api/review/items/[id]/route";
 import * as analysisRoute from "@/app/api/analysis/route";
 
@@ -32,7 +32,7 @@ const req = (method: string, path: string, o: { who?: string; body?: unknown; or
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 let t: ReturnType<typeof memoryTeamStore>;
 
-beforeEach(() => { Object.assign(process.env, env); t = memoryTeamStore(); mem.current = t.store; });
+beforeEach(() => { resetRateLimits(); Object.assign(process.env, env); t = memoryTeamStore(); mem.current = t.store; });
 
 describe("no login: every visitor can use every tool", () => {
   it("a first-time visitor (no cookie at all) can write, and is issued an anonymous id cookie", async () => {
@@ -53,7 +53,7 @@ describe("no login: every visitor can use every tool", () => {
     expect(r.headers.get("set-cookie")).toMatch(/jarvis_visitor=[a-f0-9]{24}/);
     expect(t.state.changes[0].actor).not.toContain("admin");
   });
-  it("every endpoint works for a visitor: watchlist, shortlist, withdraw, vote, decision, pack, analysis (validation still applies)", async () => {
+  it("every endpoint works for a visitor: watchlist, shortlist, withdraw, vote, decision, analysis (validation still applies)", async () => {
     expect((await sens.PUT(req("PUT", "/api/watchlist/sensitivity", { who: V1, body: { sensitivity: "strict" } }))).status).toBe(200);
     expect((await sens.PUT(req("PUT", "/api/watchlist/sensitivity", { who: V1, body: { sensitivity: "wild" } }))).status).toBe(400);
     const made = await items.POST(req("POST", "/api/review/items", { who: V1, body: { weekStart: "2026-10-09", topicId: "t1", theme: "Slow reviews", reason: "why" } }));
@@ -64,9 +64,7 @@ describe("no login: every visitor can use every tool", () => {
     expect((await vote.PUT(req("PUT", "/x", { who: V2, body: { choice: "park" } }), ctx(id))).status).toBe(200);
     expect((await decision.POST(req("POST", "/x", { who: V2, body: { outcome: "prioritised", rationale: "ship it" } }), ctx(id))).status).toBe(201);
     expect((await decision.POST(req("POST", "/x", { who: V2, body: { outcome: "prioritised", rationale: " " } }), ctx(id))).status).toBe(400);
-    expect((await pack.POST(req("POST", "/api/pack", { who: V1 }))).status).toBe(201);
     expect((await analysisRoute.POST(req("POST", "/api/analysis", { who: V1, body: { weekStart: "bad" } }))).status).toBe(400);
-    expect(t.state.packs).toHaveLength(1);
   });
   it("one vote per browser: voting again changes it, and a different browser is a different voter", async () => {
     await items.POST(req("POST", "/api/review/items", { who: V1, body: { weekStart: "2026-10-09", topicId: "t1", theme: "Slow reviews", reason: "why" } }));
@@ -99,13 +97,13 @@ describe("what is still enforced without a login", () => {
     for (const o of [{ origin: "https://evil.test" }, { origin: null }, { ct: "text/plain" }, { ct: "application/x-www-form-urlencoded" }]) {
       expect((await terms.POST(req("POST", "/api/watchlist/terms", { who: V1, body: { topicId: "t1", term: "x y", kind: "include" }, ...o }))).status).toBe(403);
     }
-    expect((await pack.POST(req("POST", "/api/pack", { origin: "https://evil.test" }))).status).toBe(403);
-    expect(t.state.terms.length + t.state.changes.length + t.state.packs.length).toBe(0);
+    expect((await items.POST(req("POST", "/api/review/items", { origin: "https://evil.test", body: { weekStart: "2026-10-09", topicId: "t1", theme: "Slow reviews", reason: "why" } }))).status).toBe(403);
+    expect(t.state.terms.length + t.state.changes.length + t.state.items.length).toBe(0);
   });
   it("answers 400 to invalid JSON and never caches", async () => {
     const r = await terms.POST(new Request(`${ORIGIN}/api/watchlist/terms`, { method: "POST", headers: { origin: ORIGIN, "content-type": "application/json" }, body: "{nope" }));
     expect(r.status).toBe(400);
-    expect((await pack.POST(req("POST", "/api/pack"))).headers.get("cache-control")).toBe("no-store");
+    expect(r.headers.get("cache-control")).toBe("no-store");
   });
   it("validation and conflicts still surface as 4xx with the reason, not as success", async () => {
     const body = { topicId: "t1", term: "flaky tests", kind: "include" };
@@ -127,5 +125,29 @@ describe("what is still enforced without a login", () => {
     await expect(import("@/app/api/auth/login/route" as string)).rejects.toThrow();
     await expect(import("@/app/api/auth/request/route" as string)).rejects.toThrow();
     await expect(import("@/app/api/auth/verify/route" as string)).rejects.toThrow();
+  });
+});
+
+describe("abuse protection on a public site", () => {
+  const post = (ip: string) => analysisRoute.POST(new Request(`${ORIGIN}/api/analysis`, { method: "POST", headers: { origin: ORIGIN, "content-type": "application/json", "x-forwarded-for": ip }, body: JSON.stringify({ weekStart: "bad" }) }));
+  it("the heavy derive endpoint allows a few calls per client per window, then answers 429 with Retry-After", async () => {
+    for (let i = 0; i < 4; i++) expect((await post("203.0.113.9")).status).toBe(400); // reaches validation: allowed
+    const blocked = await post("203.0.113.9");
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await blocked.json()).error).toMatch(/Too many requests/);
+  });
+  it("another client is not affected", async () => {
+    for (let i = 0; i < 5; i++) await post("203.0.113.9");
+    expect((await post("198.51.100.4")).status).toBe(400);
+  });
+  it("ordinary writes are limited too (40 per minute per client)", async () => {
+    let last = 0;
+    for (let i = 0; i < 41; i++) last = (await sens.PUT(new Request(`${ORIGIN}/api/watchlist/sensitivity`, { method: "PUT", headers: { origin: ORIGIN, "content-type": "application/json", "x-forwarded-for": "192.0.2.7" }, body: JSON.stringify({ sensitivity: "strict" }) }))).status;
+    expect(last).toBe(429);
+  });
+  it("a refused request writes nothing", async () => {
+    for (let i = 0; i < 5; i++) await post("203.0.113.9");
+    expect(t.state.items.length + t.state.changes.length).toBe(0);
   });
 });
