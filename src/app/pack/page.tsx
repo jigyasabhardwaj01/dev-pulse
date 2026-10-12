@@ -43,7 +43,7 @@ export default async function Pack() {
         <p className="lede">What the team decided to work on, from the latest Friday report. It is built on request, not on a schedule, and anyone can build or refresh it.</p>
         <div className="chips-row"><PackBuild hasPack={Boolean(row)} /></div>
       </header>
-      {!pack || !row ? <EmptyState title="No pack has been built yet" body="When the owner builds it, it will list prioritised work from recorded decisions. Until then, nothing is committed for the coming week." action={{ href: "/review", label: "Go to review" }} /> : (
+      {!pack || !row ? <EmptyState title="No pack has been built yet" body="When someone builds it, it will list prioritised work from recorded decisions. Until then, nothing is committed for the coming week." action={{ href: "/review", label: "Go to review" }} /> : (
         <>
           <p className={`alert ${freshness === "current" ? "info" : "warn"}`} role="status">{FRESH[freshness]?.text} Built {formatDateTime(row.created_at)}{pack.periodLabel ? ` from the report for ${pack.periodLabel}` : ""}.</p>
           <section className="card card-pad section" aria-labelledby="c-h">
@@ -62,7 +62,7 @@ export default async function Pack() {
           {pack.suggestions.items.length > 0 && (
             <section className="card card-pad section" aria-labelledby="s-h">
               <h2 id="s-h">{pack.suggestions.label}</h2>
-              <p className="muted small">AI-written prompts. Nobody has approved these.</p>
+              <p className="muted small">Generated automatically from the report's numbers: not findings, and nobody has approved them.</p>
               <ul className="pack-list">{pack.suggestions.items.map((s) => <li key={s}>{s}</li>)}</ul>
             </section>
           )}
