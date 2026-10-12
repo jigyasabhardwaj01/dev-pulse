@@ -2,7 +2,7 @@
 
 Weekly, AI-generated digest of what developers are complaining about (Hacker News + Stack Overflow),
 whether each pain point is trending up or down week over week, and which look unresolved.
-Free tiers only: Vercel, Supabase, Google AI Studio (Gemini Flash), Resend.
+Sources: Hacker News, Stack Overflow, Reddit, GitHub Issues. Free tiers only: Vercel, Supabase, Google AI Studio (Gemini Flash), Resend.
 
 **Live:** https://dev-pulse-omega-pink.vercel.app · **Repo:** https://github.com/jigyasabhardwaj01/dev-pulse
 
@@ -19,6 +19,8 @@ flowchart TD
   Pipe --> SO["stackoverflow.ts<br/>Stack Exchange API<br/>is_answered"]
   HN --> Match["matching.ts keyword filter<br/>+ 7-day window filter"]
   SO --> Match
+  RD --> Match
+  GH --> Match
   Match --> Dedupe["dedupe.ts<br/>(source, source_id)"]
   Dedupe -->|"insert, ignore duplicates"| Raw[("raw_posts")]
 
@@ -34,7 +36,8 @@ flowchart TD
   Brief --> Briefs[("briefs")]
   Brief --> Mail["email.ts -> Resend<br/>onboarding@resend.dev"]
 
-  Briefs --> Home["/  latest brief<br/>ranked pain points, trend %, unresolved badge"]
+  Briefs --> Home["/  grouped by category<br/>short intro, trend, unresolved flag"]
+  Raw --> Posts["/posts  underlying posts per count"]
   Agg --> Hist["/history  Recharts line chart"]
 ```
 

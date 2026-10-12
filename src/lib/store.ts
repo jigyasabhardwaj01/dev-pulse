@@ -106,7 +106,7 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
     },
 
     async saveBrief(weekStart, narrative, painPoints) {
-      ok(await db.from("briefs").upsert({ week_start: weekStart, narrative, top_pain_points: painPoints }, { onConflict: "week_start" }), "save brief");
+      ok(await db.from("briefs").upsert({ week_start: weekStart, narrative, top_pain_points: painPoints, created_at: new Date().toISOString() }, { onConflict: "week_start" }), "save brief");
     },
   };
 }
