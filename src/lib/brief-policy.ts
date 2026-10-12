@@ -1,4 +1,4 @@
-import type { Comparison, Coverage } from "./coverage";
+import type { Comparison, Coverage, NotCollected } from "./coverage";
 import type { ReportAnalysis } from "./analysis";
 import type { ThemeTrend } from "./types";
 import { sameConfig, type ConfigSnapshot } from "./watchlist";
@@ -7,7 +7,7 @@ import { sameConfig, type ConfigSnapshot } from "./watchlist";
 export interface BriefDraft {
   narrative: string;
   points: ThemeTrend[];
-  coverage: { sources: Coverage; comparison: Comparison };
+  coverage: { sources: Coverage; comparison: Comparison; notCollected?: NotCollected };
   /** Posts in the reporting period that were still unclassified when this version was built. */
   pendingCount: number;
   usedFallback: boolean;

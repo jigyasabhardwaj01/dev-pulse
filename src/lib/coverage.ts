@@ -5,6 +5,9 @@ export interface SourceCoverage { status: SourceStatus; posts: number; truncated
 /** Per-source record for one reporting period. A source absent from this map was not attempted. */
 export type Coverage = Partial<Record<Source, SourceCoverage>>;
 
+/** Sources deliberately NOT collected this period (disabled), with the reason. Distinct from a source that failed, and never a zero count. */
+export type NotCollected = Partial<Record<Source, string>>;
+
 export type ComparisonState = "comparable" | "no_prior" | "incomparable";
 export interface Comparison {
   state: ComparisonState;
@@ -74,9 +77,22 @@ function caveatsFor(current: Coverage, previous: Coverage | null): string[] {
   return out;
 }
 
-export function assessComparison(current: Coverage, previous: Coverage | null): Comparison {
+export function assessComparison(current: Coverage, previous: Coverage | null, notCollected: NotCollected = {}): Comparison {
   const caveats = caveatsFor(current, previous);
-  const result = assessBlocking(current, previous);
+  // A source switched off on purpose does not make the comparison unfair when it was only a small part of the previous period:
+  // the trend is shown, with a caveat saying what is missing. If it was a material share of the previous period, trends are withheld.
+  const dropped: Coverage = {};
+  if (previous) {
+    const total = Object.values(previous).reduce((n, v) => n + (v?.posts ?? 0), 0);
+    for (const s of Object.keys(notCollected) as Source[]) {
+      const p = previous[s];
+      if (!p || current[s]) continue;
+      const share = total ? p.posts / total : 0;
+      if (share < MATERIAL_SHARE) { dropped[s] = p; caveats.push(`${label(s)} was not collected this period; it supplied ${Math.round(share * 100)}% of the previous period's posts`); }
+    }
+  }
+  const prevForBlocking = previous ? (Object.fromEntries(Object.entries(previous).filter(([s]) => !(s in dropped))) as Coverage) : null;
+  const result = assessBlocking(current, prevForBlocking);
   return caveats.length ? { ...result, caveats } : result;
 }
 

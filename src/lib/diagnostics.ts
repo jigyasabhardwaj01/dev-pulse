@@ -27,6 +27,7 @@ export const REMEDY: Record<string, string> = {
   SOURCE_RATE_LIMITED: "Wait for the provider's limit to reset. For Reddit, OAuth credentials (REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET) raise the limit.",
   SOURCE_AUTH: "Check the source's API credentials in the deployment's environment variables.",
   SOURCE_CAPPED: "Only the newest results are retrieved, by design. No action needed unless complete counts matter.",
+  SOURCE_DISABLED: "Intentional. Enable it by configuring its credentials in the deployment environment (see BACKEND.md section 19).",
   CLASSIFY_NO_MODEL: "Set OPENROUTER_API_KEY (and optionally OPENROUTER_MODEL, a google/ model id) in the deployment environment.",
   CLASSIFY_ABORTED: "Posts stay unclassified and are retried on the next run. Check the OpenRouter key, credit balance and the function logs.",
   CLASSIFY_PENDING: "These posts are retried automatically on the next run.",

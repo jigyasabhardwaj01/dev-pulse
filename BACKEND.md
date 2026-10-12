@@ -144,3 +144,13 @@ Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side onl
 - Retries: at most 3 attempts for 408/429/5xx/network errors with back-off (Retry-After honoured, capped, and never past the run's deadline). 401/403 (bad key) and 402 (no credit) stop immediately and trip a breaker so the rest of the run makes no further requests; the run then reports `CLASSIFY_ABORTED` and the posts stay unclassified for the next run.
 - Usage (model, provider, latency, tokens, cost when OpenRouter returns it) is available per call through `onResult`.
 - Live check: `LIVE_AI=1 OPENROUTER_API_KEY=... npx vitest run tests/live-openrouter.dev.test.ts`. The key must be a rotated one set in Vercel's protected settings; never commit it.
+
+## 19. Active sources and the Reddit decision (2026-10-12)
+
+Evidence from production runs (`source_fetches`): Hacker News, GitHub Issues and Stack Exchange answered every request (0 failures). Reddit's public feed, requested from Vercel, was answered with HTTP 429 (once 403) in 8 of 9 topic fetches across two runs, taking 18 to 54 s each, while the same feed answered from a developer machine. That points at rate limiting of shared hosting IPs, not at our request construction or parsing. Without API credentials there is no supported way to make it reliable, so:
+
+- **Active by default:** Hacker News, Stack Exchange (Stack Overflow site), GitHub Issues.
+- **Reddit is opt-in:** collected only when `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` (app-only OAuth) are set, or when `REDDIT_PUBLIC_ENABLED=1`. Otherwise the run records `SOURCE_DISABLED`, the report's `coverage.notCollected` names Reddit and the reason, the report page shows a "Not collected" row and a warning note, the sealed analysis and the Friday email carry a limitation line, and Pipeline Health shows Reddit as "Not checked". It is never shown as zero posts or as a failure.
+- **Comparison:** a source switched off on purpose does not block week-over-week trends when it supplied under 10% of the previous period's posts (a caveat is shown); above that, trends are withheld.
+- **Coverage lost:** Reddit supplied about 1.5% of stored posts (6 of 395), so the practical loss is small. Stack Exchange yields little for these topics (0 to 6 posts per topic per week) but works.
+- No other source was added: no further documented, reliable, free source was justified for the current topics.

@@ -61,7 +61,7 @@ const network = async (url: string, init?: RequestInit): Promise<Response> => {
   throw new Error(`unexpected outbound request: ${url}`);
 };
 
-const ENV = { CRON_SECRET: "s3cret", RESEND_API_KEY: "re_test", DIGEST_TO_EMAIL: "test@example.test", APP_URL: "https://example.test" };
+const ENV = { CRON_SECRET: "s3cret", RESEND_API_KEY: "re_test", DIGEST_TO_EMAIL: "test@example.test", APP_URL: "https://example.test", REDDIT_PUBLIC_ENABLED: "1" };
 let saved: Record<string, string | undefined> = {};
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -293,4 +293,39 @@ describe("failures at each boundary are handled and surfaced (mocked)", () => {
     expect(h.level).toBe("attention");
     expect(h.reasons.some((r) => /Every source failed/.test(r.text))).toBe(true);
   }, 30_000);
+});
+
+describe("Reddit is off unless a supported access method is configured (mocked end to end)", () => {
+  it("by default Reddit is not collected, not called, not counted as zero or failed, and the report and email disclose it", async () => {
+    delete process.env.REDDIT_PUBLIC_ENABLED; delete process.env.REDDIT_CLIENT_ID; delete process.env.REDDIT_CLIENT_SECRET;
+    const res = await call();
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(Object.keys(body.sources)).not.toContain("reddit");
+    expect(body.diagnostics.find((d: { code: string }) => d.code === "SOURCE_DISABLED")).toMatchObject({ severity: "info", source: "reddit" });
+    expect(body.diagnostics.map((d: { code: string }) => d.code)).not.toContain("SOURCE_FAILED");
+    const saved = await mem().getBrief(body.weekStart);
+    expect(saved?.coverage.notCollected?.reddit).toMatch(/rate limited/);
+    expect(saved?.coverage.sources.reddit).toBeUndefined();            // absent, never a fabricated zero
+    expect(saved?.analysis?.limitations.join(" ")).toMatch(/Reddit was not collected.*not zero mentions/);
+    expect(world.resendCalls[0].body.html).toContain("Reddit was not collected");
+  });
+  it("the dashboard says so: a 'Not collected' row and a warning note", async () => {
+    delete process.env.REDDIT_PUBLIC_ENABLED;
+    const { readCoverage } = await import("@/lib/insights");
+    const r = readCoverage({ hn: { status: "ok", posts: 3 } }, null, "no_prior", { reddit: "no credentials" });
+    expect(r.notes[0]).toMatchObject({ level: "warn", text: expect.stringContaining("Reddit was not collected") });
+    const { default: SourceCoverage } = await import("@/components/SourceCoverage");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const html = renderToStaticMarkup(<SourceCoverage sources={{ hn: { status: "ok", posts: 3 } }} notCollected={{ reddit: "no credentials" }} />);
+    expect(html).toContain("Not collected"); expect(html).toContain("not zero posts");
+  });
+  it("OAuth credentials, or the explicit public flag, turn it on", async () => {
+    const { redditAccessFrom } = await import("@/lib/sources/reddit-access");
+    expect(redditAccessFrom({} as never)).toMatchObject({ enabled: false });
+    expect(redditAccessFrom({ REDDIT_CLIENT_ID: "a" } as never)).toMatchObject({ enabled: false });
+    expect(redditAccessFrom({ REDDIT_CLIENT_ID: "a", REDDIT_CLIENT_SECRET: "b" } as never)).toEqual({ enabled: true, method: "oauth" });
+    expect(redditAccessFrom({ REDDIT_PUBLIC_ENABLED: "1" } as never)).toEqual({ enabled: true, method: "public" });
+    expect(redditAccessFrom({ REDDIT_PUBLIC_ENABLED: "true" } as never)).toMatchObject({ enabled: false });
+  });
 });

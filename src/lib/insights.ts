@@ -1,4 +1,4 @@
-import { SOURCE_LABEL, type Comparison, type Coverage } from "./coverage";
+import { SOURCE_LABEL, type Comparison, type Coverage, type NotCollected } from "./coverage";
 import { isMostlyUnresolved } from "./trend";
 import type { ThemeTrend } from "./types";
 import { formatPeriod, istPeriodFromKey, type ReportStats } from "./view";
@@ -171,8 +171,9 @@ const labelToSource = (l: string) => Object.entries(SOURCE_LABEL).find(([, v]) =
  * for this and the previous period become one note per scope instead of one line each, and every note says which period
  * it affects. A failed or partial source is never described as having returned zero posts.
  */
-export function readCoverage(sources: Coverage | null | undefined, comparison: Comparison | null | undefined, reliability: Reliability): CoverageReading {
+export function readCoverage(sources: Coverage | null | undefined, comparison: Comparison | null | undefined, reliability: Reliability, notCollected?: NotCollected | null): CoverageReading {
   const notes: CoverageNote[] = [];
+  for (const [s, why] of Object.entries(notCollected ?? {})) notes.push({ level: "warn", scope: "this", text: `${label(s)} was not collected this period (${why}). Its discussions are missing from the counts; this is not zero mentions.` });
   const entries = (Object.entries(sources ?? {}) as [string, { status: string; posts: number; truncated?: boolean }][]).filter(([, v]) => v);
   const failed = entries.filter(([, v]) => v.status === "error").map(([k]) => label(k));
   const partial = entries.filter(([, v]) => v.status === "partial").map(([k]) => label(k));
