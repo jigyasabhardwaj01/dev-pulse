@@ -325,3 +325,26 @@ details.tech dl div { display: flex; justify-content: space-between; gap: 12px; 
   .kpi .k-value { font-size: 1.5rem; }
   .donut-wrap { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 }
+
+/* ---------- team workflow: watchlist, review, pack, sign-in ---------- */
+.stack { display: grid; gap: 12px; } .stack-sm { display: grid; gap: 8px; }
+.row-wrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.input { font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 10px; padding: 8px 12px; min-height: 40px; min-width: 0; max-width: 100%; }
+textarea.input { resize: vertical; width: 100%; }
+.input:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.btn-sm { min-height: 36px; padding: 5px 11px; font-size: .82rem; }
+.btn-danger { border-color: color-mix(in srgb, var(--bad) 55%, transparent); color: var(--bad); }
+.btn:disabled { opacity: .55; cursor: progress; }
+.notice-ok { color: var(--ok); } .notice-err { color: var(--bad); font-weight: 600; }
+.radio-card { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.radio-card input { margin-top: 4px; width: 18px; height: 18px; accent-color: var(--accent); }
+.owner-box { border-top: 1px dashed var(--border-strong); padding-top: 10px; }
+.term-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.term-row { display: grid; grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr); gap: 10px 16px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+.term-row:first-child { border-top: 0; }
+.review-grid { display: grid; gap: 14px; }
+.review-item { padding: 16px 18px; display: grid; gap: 10px; }
+.tally { display: inline-flex; gap: 10px; font-variant-numeric: tabular-nums; }
+.pack-list { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
+.history-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: .84rem; }
+@media (max-width: 720px) { .term-row { grid-template-columns: minmax(0, 1fr); } .input { width: 100%; } .row-wrap > .input { flex: 1 1 100%; } }

@@ -486,7 +486,7 @@ describe("Application shell", async () => {
   const { default: TopBar } = await import("@/components/TopBar");
   const { NAV, MOBILE_PRIMARY, MOBILE_MORE, activeItem } = await import("@/components/nav");
   it("the sidebar lists every page and marks exactly the active one", async () => {
-    for (const [path, label] of [["/", "Overview"], ["/reports/2026-10-02", "Weekly Reports"], ["/posts", "Evidence Explorer"], ["/history", "History"], ["/status", "Pipeline Health"]]) {
+    for (const [path, label] of [["/", "Overview"], ["/reports/2026-10-02", "Weekly Reports"], ["/posts", "Evidence Explorer"], ["/history", "History"], ["/watchlist", "Watchlist"], ["/review", "Team Review"], ["/pack", "Monday Pack"], ["/status", "Pipeline Health"]]) {
       nav.path = path;
       const out = html(<Sidebar />);
       for (const n of NAV) expect(out).toContain(n.label);
@@ -498,7 +498,7 @@ describe("Application shell", async () => {
     nav.path = "/";
     const out = html(<MobileBar />);
     expect(MOBILE_PRIMARY.map((n) => n.label)).toEqual(["Overview", "Weekly Reports", "Evidence Explorer"]);
-    expect(MOBILE_MORE.map((n) => n.label)).toEqual(["History", "Pipeline Health"]);
+    expect(MOBILE_MORE.map((n) => n.label)).toEqual(["History", "Watchlist", "Team Review", "Monday Pack", "Pipeline Health"]);
     expect(out).toContain('aria-expanded="false"');
     expect(out).toContain('aria-controls="more-menu"');
     expect(out).toContain('aria-label="More pages and settings"');
@@ -513,6 +513,6 @@ describe("Application shell", async () => {
   });
   it("navigation hrefs are unique and the top-level routes exist", () => {
     expect(new Set(NAV.map((n) => n.href)).size).toBe(NAV.length);
-    expect(NAV.map((n) => n.href)).toEqual(["/", "/reports", "/posts", "/history", "/status"]);
+    expect(NAV.map((n) => n.href)).toEqual(["/", "/reports", "/posts", "/history", "/watchlist", "/review", "/pack", "/status"]);
   });
 });

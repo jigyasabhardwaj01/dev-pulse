@@ -1,8 +1,11 @@
 import type { ReactElement } from "react";
 
-export type IconName = "overview" | "reports" | "evidence" | "history" | "pipeline" | "sun" | "moon" | "menu" | "alert" | "info" | "spark" | "arrow" | "check";
+export type IconName = "overview" | "reports" | "evidence" | "history" | "pipeline" | "sun" | "moon" | "menu" | "alert" | "info" | "spark" | "arrow" | "check" | "watch" | "review" | "pack";
 
 const P: Record<IconName, ReactElement> = {
+  watch: <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
+  review: <><path d="M9 6h11M9 12h11M9 18h11" /><path d="m3.5 6 1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17" /></>,
+  pack: <><rect x="4" y="4" width="16" height="17" rx="2" /><path d="M9 4V2.8h6V4M8.5 11h7M8.5 15h4.5" /></>,
   overview: <><rect x="3" y="3" width="7.5" height="9" rx="2" /><rect x="13.5" y="3" width="7.5" height="5.5" rx="2" /><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="2" /><rect x="3" y="15" width="7.5" height="6" rx="2" /></>,
   reports: <><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></>,
   evidence: <><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2M8.5 11h5M11 8.5v5" /></>,

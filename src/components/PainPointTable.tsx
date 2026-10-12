@@ -4,9 +4,10 @@ import { evidenceHref } from "@/lib/insights";
 import { pct } from "@/lib/view";
 import type { ThemeTrend } from "@/lib/types";
 import MovementBadge from "./MovementBadge";
+import { ShortlistButton } from "./ReviewControls";
 
 /** Pain points grouped by category, one compact comparable row each. Pass the output of `displayPoints`. */
-export default function PainPointTable({ points, weekStart }: { points: ThemeTrend[]; weekStart: string }) {
+export default function PainPointTable({ points, weekStart, canShortlist = false }: { points: ThemeTrend[]; weekStart: string; canShortlist?: boolean }) {
   const groups = groupPainPoints(points);
   const max = Math.max(1, ...groups.flatMap((g) => g.items.map((i) => i.count)));
   const all = groups.reduce((s, g) => s + g.totalMentions, 0);
@@ -53,7 +54,7 @@ export default function PainPointTable({ points, weekStart }: { points: ThemeTre
                 </div>
                 <div className="pp-count">{i.count}</div>
                 <div className="pp-move"><MovementBadge item={i} showCounts /></div>
-                <div>{i.count > 0 ? <Link className="pp-link" href={evidenceHref(i, weekStart)}>Evidence <span aria-hidden="true">→</span><span className="sr-only"> for {i.theme}</span></Link> : <span className="faint small">No posts</span>}</div>
+                <div>{i.count > 0 ? <Link className="pp-link" href={evidenceHref(i, weekStart)}>Evidence <span aria-hidden="true">→</span><span className="sr-only"> for {i.theme}</span></Link> : <span className="faint small">No posts</span>}{canShortlist && i.count > 0 ? <div style={{ marginTop: 6 }}><ShortlistButton weekStart={weekStart} topicId={i.topic_id} theme={i.theme} /></div> : null}</div>
               </li>
             ))}
           </ul>

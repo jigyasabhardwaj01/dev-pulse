@@ -15,6 +15,7 @@ import { getReport, listReports } from "@/lib/data";
 import { comparisonStatus, computeKpis, evidenceHref, previousWeekKey, readCoverage, selectMovers, shortRange, type Mover } from "@/lib/insights";
 import { displayPoints } from "@/lib/report-model";
 import { pct } from "@/lib/view";
+import { currentSession } from "@/lib/session";
 
 /** A saved report as the Overview (default) or as the full Weekly Report. Read-only: nothing here regenerates or edits a report. */
 export default async function ReportContent({ week, mode = "overview" }: { week?: string; mode?: "overview" | "report" }) {
@@ -103,7 +104,7 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
           <div className="section-head"><h2 id="un-heading">Unresolved problems</h2><p>{kpis.unresolvedMentions} of {kpis.mentions} mentions ({pct(kpis.unresolvedShare)}) flagged unresolved</p></div>
           <div className="card card-pad"><List items={selectMovers(points, 10).unresolved} empty="No mention was flagged unresolved." /></div>
         </section>
-        <PainPointTable points={points} weekStart={report.weekStart} />
+        <PainPointTable canShortlist={Boolean(await currentSession().catch(() => null))} points={points} weekStart={report.weekStart} />
         <section className="section" aria-labelledby="lim-heading">
           <h2 id="lim-heading">Source coverage and limitations</h2>
           <div className="grid-eq"><SourceCoverage sources={cov?.sources} /><DataNotes sources={cov?.sources} comparison={cov?.comparison} reliability={report.reliability} /></div>
@@ -121,7 +122,7 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
         <KpiCards kpis={kpis} />
       </div>
       <TopMovers movers={selectMovers(points)} weekStart={report.weekStart} previousLabel={previousLabel} />
-      <PainPointTable points={points} weekStart={report.weekStart} />
+      <PainPointTable canShortlist={Boolean(await currentSession().catch(() => null))} points={points} weekStart={report.weekStart} />
       <section className="section" aria-labelledby="sup-heading">
         <div className="section-head"><h2 id="sup-heading">Supporting metrics</h2></div>
         <div className="grid-eq">
