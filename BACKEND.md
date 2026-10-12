@@ -1,8 +1,8 @@
-# Dev Pulse: Backend Reference
+# JARVIS: Backend Reference
 
 Current as of the backend completion sprint. Everything here describes code in this repo; items marked *unverified* have not been run against a real database or provider.
 
-Live site: https://dev-pulse-omega-pink.vercel.app (runs the code from before Stage 1; see "Deployment order").
+Live site: https://dev-pulse-omega-pink.vercel.app.
 Stack: Next.js (App Router) on Vercel, Supabase (Postgres), Gemini Flash, Resend. Free tiers only.
 
 ## 1. What it does

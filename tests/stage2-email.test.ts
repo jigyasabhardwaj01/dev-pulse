@@ -21,7 +21,7 @@ describe("sendBriefEmail: the actual Resend request", () => {
     expect(init().method).toBe("POST");
     expect(init().headers.authorization).toBe("Bearer re_test_key_123");
     const body = JSON.parse(init().body);
-    expect(body.from).toBe("Dev Pulse <onboarding@resend.dev>");
+    expect(body.from).toBe("JARVIS <onboarding@resend.dev>");
     expect(body.to).toEqual(["sumit@example.com"]);
     expect(body.subject).toContain("2026-10-02");
     expect(r).toEqual({ status: "sent", messageId: "msg_abc" });

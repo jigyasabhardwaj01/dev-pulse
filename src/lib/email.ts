@@ -36,7 +36,7 @@ export function renderBriefHtml(weekStart: string, narrative: string, allPoints:
     (caveats.length ? `<p style="margin:6px 0 0;color:#6b6b63;font-size:.88em">Caveats: ${esc(caveats.join("; "))}.</p>` : "");
   const link = appUrl ? `<p style="margin-top:20px"><a href="${esc(appUrl)}">View the full dashboard and underlying posts →</a></p>` : "";
   return `<div style="font-family:system-ui,sans-serif;max-width:620px;line-height:1.5">
-<h2 style="margin:0 0 4px">Dev Pulse · week of ${esc(weekStart)}</h2>
+<h2 style="margin:0 0 4px">JARVIS · week of ${esc(weekStart)}</h2>
 ${formatPeriod(weekStart) ? `<div style="color:#555;margin-bottom:2px">${esc(formatPeriod(weekStart))}</div>` : ""}
 <div style="color:#555;margin-bottom:10px">${allPoints.reduce((s, p) => s + p.count, 0)} mentions matched to tracked themes across ${allPoints.filter((p) => p.count > 0).length} pain points</div>
 <p style="margin:0 0 6px">${esc(narrative)}</p>${note}${body}${more}${link}</div>`;
@@ -74,9 +74,9 @@ export async function sendBriefEmail(
         "idempotency-key": `dev-pulse-brief-${args.weekStart}-v${args.version ?? 1}`,
       },
       body: JSON.stringify({
-        from: "Dev Pulse <onboarding@resend.dev>",
+        from: "JARVIS <onboarding@resend.dev>",
         to: [to],
-        subject: `Dev Pulse: developer pain points, week of ${args.weekStart}`,
+        subject: `JARVIS: developer pain points, week of ${args.weekStart}`,
         html: renderBriefHtml(args.weekStart, args.narrative, args.points, dashboardUrl(env), args.comparison ?? null),
       }),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),

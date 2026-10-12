@@ -1,4 +1,6 @@
-# Dev Pulse
+# JARVIS
+
+_Formerly "Dev Pulse". Internal identifiers (repo, package, URLs, env vars, tables, the `dev-pulse-brief-` email idempotency prefix) keep the old name on purpose._
 
 Weekly, AI-generated digest of what developers are complaining about (Hacker News + Stack Overflow),
 whether each pain point is trending up or down week over week, and which look unresolved.

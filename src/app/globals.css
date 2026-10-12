@@ -1,4 +1,4 @@
-/* Dev Pulse design system: tokens first, then layout, then components. Light and dark follow the OS setting. */
+/* JARVIS design system: tokens first, then layout, then components. Light and dark follow the OS setting. */
 :root {
   --bg: #f5f6f8; --surface: #ffffff; --surface-2: #f0f2f5; --border: #dfe3e9; --border-strong: #c7cdd6;
   --text: #14181f; --muted: #566070; --accent: #2f4fd6; --accent-soft: #e9eeff; --on-accent: #ffffff;

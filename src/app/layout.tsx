@@ -4,7 +4,7 @@ import NavLinks from "@/components/NavLinks";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Dev Pulse", template: "%s · Dev Pulse" },
+  title: { default: "JARVIS", template: "%s · JARVIS" },
   description: "A weekly read on what developers are struggling with, how it is changing, and where the evidence comes from.",
 };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, colorScheme: "light dark" };
@@ -16,11 +16,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a className="skip" href="#main">Skip to content</a>
         <header className="topbar">
           <div className="topbar-inner">
-            <Link href="/" className="brand" aria-label="Dev Pulse home">
+            <Link href="/" className="brand" aria-label="JARVIS home">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M2 12h4l3-8 4 16 3-8h6" />
               </svg>
-              Dev Pulse
+              JARVIS
             </Link>
             <NavLinks />
           </div>

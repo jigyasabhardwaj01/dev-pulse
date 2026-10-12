@@ -1,4 +1,4 @@
--- Dev Pulse schema. Matches the spec, plus the additions marked "added".
+-- JARVIS schema (internal project id: dev-pulse). Matches the spec, plus the additions marked "added".
 create table if not exists topics (
   id uuid primary key default gen_random_uuid(),
   name text not null,

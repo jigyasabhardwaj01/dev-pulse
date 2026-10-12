@@ -16,7 +16,7 @@ export default function ReportHeader({ report }: { report: ReportView }) {
   const { prev, next } = report.nav;
   return (
     <header className="page-head">
-      <p className="eyebrow">{report.kind === "ist" ? "Weekly developer pulse" : "Earlier-format report"}</p>
+      <p className="eyebrow">{report.kind === "ist" ? "Weekly JARVIS report" : "Earlier-format report"}</p>
       <h1>{report.periodLabel}</h1>
       <div className="meta-row">
         <Delivery d={report.delivery} />
