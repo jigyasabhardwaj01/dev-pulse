@@ -38,6 +38,7 @@ export default function ProblemCard({ p, headingLevel = 2 }: { p: ProblemView; h
         <div><dt>Supporting discussions</dt><dd>{p.discussions}<small>{p.sources.join(", ")}{p.repeats > 0 ? ` · ${p.repeats} replies or repeats not counted twice` : ""}</small></dd></div>
         <div><dt>Compared with last week</dt><dd><span className={`pill ${TREND_TONE[p.trend.kind]}`}>{p.trend.label}</span><small>{p.trend.detail}</small></dd></div>
         <div><dt>How sure are we</dt><dd><span className={`pill ${CONF_TONE[p.confidence.level]}`}>{p.confidence.label}</span><small>{p.confidence.detail}</small></dd></div>
+        <div><dt>Suggested next step</dt><dd>{p.nextAction}<small>Generated suggestion, not a decision.</small></dd></div>
       </dl>
       {p.notRankedBecause && <p className="muted small">{p.notRankedBecause}</p>}
       <div className="stack" style={{ gap: 6 }}>

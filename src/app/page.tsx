@@ -2,10 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import EmptyState from "@/components/EmptyState";
 import ProblemCard from "@/components/ProblemCard";
+import FridayCard from "@/components/FridayCard";
 import StatusStrip from "@/components/StatusStrip";
+import { fridayStatus } from "@/lib/friday-status";
 import { loadInsights } from "@/lib/insights-data";
 import { problemHref } from "@/lib/insights-view";
-import { aiStatus, collectionStatus, reportStatus } from "@/lib/status-plain";
+import { readSchedule } from "@/lib/schedule";
+import { aiStatus, collectionStatus } from "@/lib/status-plain";
+import vercelConfig from "../../vercel.json";
 import { requireKnownWeek } from "@/lib/page-guard";
 import { formatDateTime } from "@/lib/view";
 
@@ -21,6 +25,12 @@ export default async function Insights({ searchParams }: { searchParams: Promise
   const { report, run, supported, early, analysis } = d;
   if (!report) return <EmptyState title="No report yet" body="JARVIS builds its first report on Friday morning (IST). Until then there is nothing to show, and nothing is made up." action={{ href: "/settings", label: "See what JARVIS watches" }} />;
 
+  const env = process.env;
+  const friday = fridayStatus({
+    now: new Date(), report, runs: d.runs,
+    setup: { schedule: readSchedule(vercelConfig), aiKey: Boolean(env.OPENROUTER_API_KEY), emailKey: Boolean(env.RESEND_API_KEY), recipient: env.DIGEST_TO_EMAIL ?? null, cronSecret: Boolean(env.CRON_SECRET) },
+  });
+  const growing = d.all.filter((p) => p.trend.kind === "increasing" || p.trend.kind === "new").slice(0, 5);
   const checkedAt = run ? `Last checked ${formatDateTime(run.finishedAt ?? run.startedAt)}.` : undefined;
   return (
     <>
@@ -33,8 +43,8 @@ export default async function Insights({ searchParams }: { searchParams: Promise
       <StatusStrip items={[
         { k: "New discussions", s: collectionStatus(run), when: checkedAt },
         { k: "AI analysis", s: aiStatus(run, report) },
-        { k: "Latest report", s: reportStatus(report), when: `Saved ${formatDateTime(report.generatedAt)}.` },
       ]} />
+      <FridayCard s={friday} />
       {!d.runKnown && <p className="alert warn" role="status"><span>Run history could not be read, so freshness and AI status are unknown right now.</span></p>}
 
       {report.narrative && (
@@ -53,6 +63,17 @@ export default async function Insights({ searchParams }: { searchParams: Promise
           <ol className="problems">{supported.map((p) => <ProblemCard key={p.key} p={p} />)}</ol>
         ) : (
           <div className="explain"><strong>No problem has enough evidence to be ranked.</strong><span>A problem is ranked only when at least two separate discussions mention it and one quote could be checked against the original. {early.length ? `${early.length} early signals are listed below so you can look at them yourself.` : ""}</span></div>
+        )}
+      </section>
+
+      <section className="stack" aria-labelledby="up-h">
+        <div className="section-head"><h2 id="up-h">Becoming more common</h2></div>
+        {growing.length ? (
+          <ul className="problems" style={{ gap: 10 }}>
+            {growing.map((p) => <li key={p.key} className="card card-pad" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}><span><strong>{p.theme}</strong><span className="muted small" style={{ display: "block" }}>{p.trend.detail}{p.supported ? "" : " Early signal."}</span></span><Link className="btn" href={problemHref(p)}>Look at the evidence<span className="sr-only">: {p.theme}</span></Link></li>)}
+          </ul>
+        ) : (
+          <div className="explain"><span>{d.all.some((p) => p.trend.kind !== "unknown") ? "No problem is clearly increasing this week." : "Not enough comparable data to say what is increasing. Last week's data is missing or was collected differently, so no rise or fall is claimed."}</span></div>
         )}
       </section>
 

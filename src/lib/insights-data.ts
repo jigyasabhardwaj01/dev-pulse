@@ -11,6 +11,8 @@ export interface InsightsData {
   /** The newest recorded collection run. It can be newer than the newest completed report: shown separately on purpose. */
   run: RunView | null;
   runKnown: boolean;
+  /** Recent runs (newest first), or null when run history could not be read. */
+  runs: RunView[] | null;
   supported: ProblemView[];
   early: ProblemView[];
   all: ProblemView[];
@@ -20,11 +22,11 @@ export interface InsightsData {
 /** Latest completed report plus its analysis and the latest run. A database failure throws: the page shows an error, never an empty success. */
 export async function loadInsights(week?: string): Promise<InsightsData> {
   const report = await getReport(week);
-  const runs = await getRecentRuns(3).catch(() => null);
+  const runs = await getRecentRuns(25).catch(() => null);
   const run = runs?.[0] ?? null;
   const analysis: AnalysisSource = report ? await analysisFor(makeSupabaseStore(), makeSupabaseTeamStore(), report.weekStart) : { kind: "none" };
   const p = analysis.kind === "none" || !report ? { supported: [], early: [], all: [] } : problemsFrom(analysis.analysis, report.weekStart);
-  return { report, analysis, run, runKnown: runs !== null, ...p, limitations: analysis.kind === "none" ? [] : analysis.analysis.limitations };
+  return { report, analysis, run, runKnown: runs !== null, runs, ...p, limitations: analysis.kind === "none" ? [] : analysis.analysis.limitations };
 }
 
 export async function loadProblem(week: string, topicId: string, theme: string) {

@@ -117,11 +117,16 @@ describe("Insights page", async () => {
   });
   it("shows collection, AI and report status separately, with the last check time", async () => {
     const out = await page();
-    expect(out).toContain("New discussions"); expect(out).toContain("AI analysis"); expect(out).toContain("Latest report");
+    expect(out).toContain("New discussions"); expect(out).toContain("AI analysis"); expect(out).toContain("Your Friday email"); expect(out).toContain("Action required");
     expect(out).toContain("Last checked");
   });
   it("uses no technical vocabulary on the front page", async () => {
-    expect((await page()).replace(/<[^>]+>/g, " ")).not.toMatch(/pipeline|database|supabase|cron|jsonb|checkpoint|diagnostic|idempoten/i);
+    // with the deployment correctly configured nothing technical needs to be shown; a missing setting is named only in "Action required"
+    const keys = ["OPENROUTER_API_KEY", "RESEND_API_KEY", "DIGEST_TO_EMAIL", "CRON_SECRET"];
+    const old = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    Object.assign(process.env, { OPENROUTER_API_KEY: "k", RESEND_API_KEY: "k", DIGEST_TO_EMAIL: "me@team.test", CRON_SECRET: "k" });
+    try { expect((await page()).replace(/<[^>]+>/g, " ")).not.toMatch(/pipeline|database|supabase|cron|jsonb|checkpoint|diagnostic|idempoten|env/i); }
+    finally { for (const [k, v] of Object.entries(old)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
   });
   it("labels a template summary honestly", async () => {
     mocks.insights.mockResolvedValue(insightsData({ report: { ...insightsData().report, usedFallback: true } }));
