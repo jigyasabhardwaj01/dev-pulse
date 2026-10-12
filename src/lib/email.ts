@@ -2,6 +2,7 @@ import type { FetchLike, ThemeTrend } from "./types";
 import { comparisonCaveats, comparisonNote, type Comparison, type Coverage } from "./coverage";
 import { formatPeriod } from "./view";
 import { groupPainPoints, mentionsLine, trendArrow, trendLabel } from "./grouping";
+import type { BriefItem, FridayBrief } from "./friday-brief";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -42,6 +43,53 @@ ${formatPeriod(weekStart) ? `<div style="color:#555;margin-bottom:2px">${esc(for
 <p style="margin:0 0 6px">${esc(narrative)}</p>${note}${body}${more}${link}</div>`;
 }
 
+/** Only plain http(s) links are ever rendered as links; anything else (javascript:, data:, relative) is shown as text. */
+export const safeHref = (u: string | null | undefined): string | null => {
+  if (!u) return null;
+  try { const x = new URL(u); return x.protocol === "https:" || x.protocol === "http:" ? x.toString() : null; } catch { return null; }
+};
+
+function itemHtml(i: BriefItem): string {
+  const links = i.links.map((l) => {
+    const href = safeHref(l.url);
+    const label = esc(l.title || "discussion");
+    return `<li style="margin:2px 0">${href ? `<a href="${esc(href)}">${label}</a>` : label} <span style="color:#6b6b63">(${esc(l.source)})</span></li>`;
+  }).join("");
+  return `<li style="margin:10px 0"><strong>${i.rank ? `${i.rank}. ` : ""}${esc(i.theme)}</strong> <span style="color:#6b6b63">· ${esc(i.category)}</span>${i.earlySignal ? ` <span style="color:#6b6b63">(early signal)</span>` : ""}<br>`
+    + `<span style="color:#555">${esc(i.observed)}. ${esc(i.movement)}</span><br><span style="color:#555">${esc(i.resolution)}. Evidence: ${esc(i.evidenceStrength)}.</span>`
+    + (i.because.length ? `<br><span style="color:#555">Ranked because: ${esc(i.because.join("; "))}</span>` : "")
+    + (links ? `<ul style="margin:4px 0 0;padding-left:18px;font-size:.92em">${links}</ul>` : "")
+    + `</li>`;
+}
+
+/** The Friday brief rendered from the SAVED structured brief. Observed facts, interpretation and suggestions are visibly separate. */
+export function renderFridayHtml(brief: FridayBrief, appUrl: string | null): string {
+  const o = brief.observed;
+  const h = (t: string) => `<h3 style="margin:20px 0 4px">${esc(t)}</h3>`;
+  const list = (items: BriefItem[]) => `<ul style="margin:0;padding-left:18px">${items.map(itemHtml).join("")}</ul>`;
+  const section = (title: string, items: BriefItem[]) => (items.length ? h(title) + list(items) : "");
+  const lines = (ls: string[]) => `<ul style="margin:0;padding-left:18px">${ls.map((l) => `<li style="margin:4px 0">${esc(l)}</li>`).join("")}</ul>`;
+  const top = o.top.length ? list(o.top) : `<p style="margin:0;color:#555">No pain point has enough supporting evidence to be ranked this week.</p>`;
+  const last = o.vsLastWeek.available ? lines(o.vsLastWeek.lines) : `<p style="margin:0;color:#555">Not shown: ${esc(o.vsLastWeek.withheldBecause ?? "no fair comparison with the previous period")}</p>`;
+  const base = o.vsBaseline.available ? lines(o.vsBaseline.lines) : `<p style="margin:0;color:#555">Not available: ${esc(o.vsBaseline.unavailableBecause ?? "not enough comparable weeks")}</p>`;
+  const sug = brief.suggestions.items.length
+    ? `<ul style="margin:0;padding-left:18px">${brief.suggestions.items.map((s) => `<li style="margin:4px 0">${esc(s.text)}</li>`).join("")}</ul>` : "";
+  const link = appUrl ? `<p style="margin-top:20px"><a href="${esc(appUrl)}/reports/${esc(brief.weekStart)}">View this report, with all evidence →</a></p>` : "";
+  return `<div style="font-family:system-ui,sans-serif;max-width:620px;line-height:1.5">
+<h2 style="margin:0 0 4px">JARVIS · week of ${esc(brief.weekStart)}</h2>
+<div style="color:#555;margin-bottom:2px">${esc(brief.periodLabel)}</div>
+<div style="color:#555;margin-bottom:10px">${o.totals.relevantDiscussions} relevant ${o.totals.relevantDiscussions === 1 ? "discussion" : "discussions"} matched across ${o.totals.painPoints} ${o.totals.painPoints === 1 ? "pain point" : "pain points"}</div>
+${h("Summary")}<p style="margin:0">${esc(brief.interpretation.executiveSummary)}</p>
+<p style="margin:4px 0 0;color:#6b6b63;font-size:.88em">Interpretation${brief.interpretation.usedTemplate ? " (template text, AI summary unavailable)" : " (AI-written from the data below)"}. ${esc(brief.interpretation.rankingNote)}</p>
+${h("Top pain points (observed)")}${top}
+${h("Compared with last week (observed)")}${last}
+${h("Compared with the " + "recent baseline (observed)")}${base}
+${section("New this week", o.emerging)}${section("Rising", o.rising)}${section("Declining", o.declining)}${section("Still unresolved", o.unresolved)}
+${o.limitations.length ? h("Limitations") + lines(o.limitations) : ""}
+${sug ? h(brief.suggestions.label) + sug : ""}
+<p style="margin:18px 0 0;color:#6b6b63;font-size:.88em">${esc(brief.disclaimer)}</p>${link}</div>`;
+}
+
 /**
  * A send that threw. `definite` = the provider certainly did NOT accept the message (a 4xx rejection such as bad request or
  * rate limit). Everything else (network failure, timeout, 5xx, a 409 idempotency conflict) is ambiguous: the message may
@@ -54,7 +102,7 @@ export const SEND_TIMEOUT_MS = 20_000;
 
 /** Resend free tier. From onboarding@resend.dev, which can only deliver to the Resend account owner's address. */
 export async function sendBriefEmail(
-  args: { weekStart: string; version?: number; narrative: string; points: ThemeTrend[]; comparison?: Comparison | null; coverage?: Coverage },
+  args: { weekStart: string; version?: number; narrative: string; points: ThemeTrend[]; comparison?: Comparison | null; coverage?: Coverage; brief?: FridayBrief | null },
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: FetchLike = fetch,
 ): Promise<"skipped" | { status: "sent"; messageId: string | null }> {
@@ -77,7 +125,7 @@ export async function sendBriefEmail(
         from: "JARVIS <onboarding@resend.dev>",
         to: [to],
         subject: `JARVIS: developer pain points, week of ${args.weekStart}`,
-        html: renderBriefHtml(args.weekStart, args.narrative, args.points, dashboardUrl(env), args.comparison ?? null),
+        html: args.brief ? renderFridayHtml(args.brief, dashboardUrl(env)) : renderBriefHtml(args.weekStart, args.narrative, args.points, dashboardUrl(env), args.comparison ?? null),
       }),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });

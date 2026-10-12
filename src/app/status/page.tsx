@@ -1,75 +1,48 @@
 import type { Metadata } from "next";
+import AttentionList from "@/components/AttentionList";
 import EmptyState from "@/components/EmptyState";
-import { SOURCE_LABEL } from "@/lib/coverage";
+import HealthSummary from "@/components/HealthSummary";
+import LatestRun from "@/components/LatestRun";
+import OpsPanels from "@/components/OpsPanels";
+import RunHistory from "@/components/RunHistory";
+import { loadOps } from "@/lib/ops-data";
 import { getRecentRuns } from "@/lib/data";
-import { formatDateTime } from "@/lib/view";
+import { assessHealth, attentionItems, formatReadTime } from "@/lib/health";
+import { readSchedule } from "@/lib/schedule";
+import vercelConfig from "../../../vercel.json";
 
-export const metadata: Metadata = { title: "Pipeline" };
+export const metadata: Metadata = { title: "Pipeline Health" };
 export const dynamic = "force-dynamic";
 
-const STATUS: Record<string, { cls: string; text: string }> = {
-  succeeded: { cls: "ok", text: "Succeeded" }, partial: { cls: "warn", text: "Completed with issues" },
-  failed: { cls: "bad", text: "Failed" }, running: { cls: "info", text: "Running" },
-};
-const SRC: Record<string, string> = { ok: "ok", partial: "partly failed", error: "failed" };
-
-/** Read-only health view. Nothing here can start, stop or change a run. */
+/** Read-only health view. Nothing here can start, stop or change a run, and no raw error text reaches the page. */
 export default async function Status() {
+  const now = new Date();
   let runs = null;
   let failed = false;
   try { runs = await getRecentRuns(10); } catch { failed = true; }
-  if (failed) return <EmptyState title="We couldn't load run history" body="The database didn't answer. Try again in a moment." />;
+  if (failed) return <EmptyState title="We couldn't load run history" body="The database didn't answer, so the health below can't be checked right now. Nothing was changed. Reload in a moment." action={{ href: "/status", label: "Reload" }} />;
   if (runs === null) return <EmptyState title="Run history isn't available yet" body="It starts recording once the reliability update has been applied to the database." />;
-  if (!runs.length) return <EmptyState title="No runs recorded yet" body="Each scheduled or backfill run appears here with the health of every source." />;
+  if (!runs.length) return <EmptyState title="No runs recorded yet" body="Each scheduled or backfill run appears here with the health of every source. Until then, health is unknown." />;
 
+  const ops = await loadOps().catch(() => ({ checkpoints: { ok: false as const }, alerts: { ok: false as const }, topics: {} }));
+  const schedule = readSchedule(vercelConfig);
+  const health = assessHealth({ runs, schedule, now });
   return (
     <>
       <header className="page-head">
-        <p className="eyebrow">Operations</p>
-        <h1>Pipeline health</h1>
-        <p className="muted">The most recent runs and how each source behaved. A failed source is shown as failed, never as &ldquo;zero posts&rdquo;.</p>
+        <p className="eyebrow">Operations · read-only</p>
+        <h1>Pipeline Health</h1>
+        <p className="lede">Is the pipeline working, what did it collect, and does anything need a person? Every status below comes from recorded runs; a failed source is a gap, never &ldquo;zero posts&rdquo;.</p>
+        <div className="chips-row">
+          <span className="muted small" role="status">Read from the database {formatReadTime(now)}</span>
+          <a className="btn" href="/status">Reload</a>
+        </div>
       </header>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 14 }}>
-        {runs.map((r) => {
-          const st = STATUS[r.status] ?? { cls: "neutral", text: r.status };
-          return (
-            <li key={r.id} className="card" style={{ padding: "16px 18px", display: "grid", gap: 10 }}>
-              <div className="item-top">
-                <div>
-                  <strong>{r.periodLabel || r.weekStart}</strong>
-                  <div className="muted small">Started {formatDateTime(r.startedAt)}{r.durationSec !== null ? ` · ${r.durationSec}s` : ""}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span className={`pill ${st.cls}`}>{st.text}</span>
-                  <span className="pill neutral">{r.trigger === "backfill" ? "Backfill" : "Scheduled"}</span>
-                  {r.stuck && <span className="pill bad">Appears stuck: no finish recorded</span>}
-                </div>
-              </div>
-              {r.sources.length > 0 && (
-                <ul className="chips">
-                  {r.sources.map((s) => (
-                    <li key={s.source} className={`chip ${s.status}`}>
-                      <span className="dot" aria-hidden="true" />
-                      <span><strong>{SOURCE_LABEL[s.source] ?? s.source}</strong> <span className="muted">{SRC[s.status]}</span></span>
-                      <span className="count">{s.fetched} fetched · {s.accepted} relevant · {s.inserted} new{s.truncated ? " · capped" : ""}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {r.sources.filter((s) => s.reason).map((s) => (
-                <p key={s.source} className="small muted"><strong>{SOURCE_LABEL[s.source] ?? s.source}:</strong> {s.reason}</p>
-              ))}
-              <p className="small muted">
-                {r.newPosts !== null && <>New posts {r.newPosts} · </>}
-                {r.classified !== null && <>classified {r.classified} · </>}
-                {r.unclassified ? <>{r.unclassified} awaiting classification (retried next run) · </> : null}
-                Email: {r.emailStatus === "unconfirmed" ? "delivery unconfirmed (check the inbox)" : r.emailStatus ? r.emailStatus.replace("_", " ") : "–"}{r.usedFallback ? " · summary from template" : ""}
-              </p>
-              {r.problem && <p className="banner warn small" role="alert">{r.problem}</p>}
-            </li>
-          );
-        })}
-      </ul>
+      <HealthSummary health={health} schedule={schedule} now={now} />
+      <AttentionList items={attentionItems(health)} />
+      <LatestRun health={health} now={now} />
+      <RunHistory runs={runs} />
+      <OpsPanels {...ops} now={now} />
     </>
   );
 }

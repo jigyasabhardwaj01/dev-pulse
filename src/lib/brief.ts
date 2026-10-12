@@ -54,7 +54,7 @@ const mentions = (n: number) => `${n} mention${n === 1 ? "" : "s"}`;
 const newSentence = (n: number) =>
   n === 0 ? "No pain points are new this week." : `${n} pain point${n === 1 ? " is" : "s are"} new this week.`;
 
-/** Deterministic 2-3 sentence brief from the same facts; used whenever Gemini fails or breaks the rules. */
+/** Deterministic 2-3 sentence brief from the same facts; used whenever the AI model fails or breaks the rules. */
 export function buildFallbackNarrative(trends: ThemeTrend[], _meta?: BriefMeta, state?: ComparisonState): string {
   const f = computeFacts(trends, state);
   if (!f.loudest) return "No tracked developer conversations were found this week.";

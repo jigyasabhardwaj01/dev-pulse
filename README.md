@@ -4,7 +4,7 @@ _Formerly "Dev Pulse". Internal identifiers (repo, package, URLs, env vars, tabl
 
 Weekly, AI-generated digest of what developers are complaining about (Hacker News + Stack Overflow),
 whether each pain point is trending up or down week over week, and which look unresolved.
-Sources: Hacker News, Stack Overflow, Reddit, GitHub Issues. Free tiers only: Vercel, Supabase, Google AI Studio (Gemini Flash), Resend.
+Sources: Hacker News, Stack Overflow, Reddit, GitHub Issues. Free tiers only: Vercel, Supabase, OpenRouter (Google Gemini Flash models only), Resend.
 
 **Live:** https://dev-pulse-omega-pink.vercel.app · **Repo:** https://github.com/jigyasabhardwaj01/dev-pulse
 
@@ -12,7 +12,7 @@ Sources: Hacker News, Stack Overflow, Reddit, GitHub Issues. Free tiers only: Ve
 
 ```mermaid
 flowchart TD
-  Cron["Vercel Cron<br/>Fri 03:30 UTC (09:00 IST)<br/>vercel.json"] -->|"GET + Bearer CRON_SECRET"| Route["/api/cron/weekly-digest<br/>route.ts (fails closed)"]
+  Cron["Vercel Cron<br/>Fri 00:30 UTC (06:00 IST)<br/>vercel.json"] -->|"GET + Bearer CRON_SECRET"| Route["/api/cron/weekly-digest<br/>route.ts (fails closed)"]
   Route --> Pipe["pipeline.ts runDigest()"]
 
   Topics[("Supabase: topics<br/>keywords, canonical_themes, tags<br/>edited in dashboard, no redeploy")] --> Pipe
@@ -26,9 +26,9 @@ flowchart TD
   Match --> Dedupe["dedupe.ts<br/>(source, source_id)"]
   Dedupe -->|"insert, ignore duplicates"| Raw[("raw_posts")]
 
-  Raw -->|"unclassified posts in window"| Classify["classify.ts + gemini.ts<br/>closed vocabulary -> theme or 'other'<br/>SO unresolved = NOT is_answered<br/>HN unresolved = Gemini judgment"]
+  Raw -->|"unclassified posts in window"| Classify["classify.ts + openrouter.ts<br/>closed vocabulary -> theme or 'other'<br/>SO unresolved = NOT is_answered<br/>HN unresolved = Gemini judgment"]
   Classify -->|"theme, sentiment, unresolved"| Raw
-  Gemini{{"Google AI Studio<br/>Gemini Flash<br/>model id from GEMINI_MODEL"}} <--> Classify
+  Gemini{{"OpenRouter, Google providers only<br/>google/gemini-3.7-flash<br/>model id from OPENROUTER_MODEL"}} <--> Classify
   Gemini <--> Brief
 
   Raw --> Trend["classify.countThemes + trend.ts<br/>vs last week; zero-division cases"]

@@ -1,5 +1,7 @@
 import type { Comparison, Coverage } from "./coverage";
+import type { ReportAnalysis } from "./analysis";
 import type { ThemeTrend } from "./types";
+import { sameConfig, type ConfigSnapshot } from "./watchlist";
 
 /** The content of one saved report version. Everything the dashboard and the email show comes from this. */
 export interface BriefDraft {
@@ -9,6 +11,10 @@ export interface BriefDraft {
   /** Posts in the reporting period that were still unclassified when this version was built. */
   pendingCount: number;
   usedFallback: boolean;
+  /** The effective watchlist and sensitivity this report was built with. Sealed with the report, so changing the watchlist later cannot change what it claims to have monitored. */
+  configSnapshot?: ConfigSnapshot | null;
+  /** Aggregation, ranking, baseline and limitations, sealed with the report. */
+  analysis?: ReportAnalysis | null;
 }
 
 export type EmailState = "sending" | "sent" | "failed" | null;
@@ -43,7 +49,8 @@ export function decideBriefWrite(existing: BriefRecord | null, draft: BriefDraft
   if (isFrozen(existing)) return { action: "keep", reason: `report is ${existing.emailStatus === "sent" ? "already delivered" : "being delivered"}` };
   if (draft.pendingCount > existing.pendingCount) return { action: "keep", reason: "rerun is less complete than the saved report" };
   if (draft.usedFallback && !existing.usedFallback) return { action: "keep", reason: "rerun would replace the AI narrative with the fallback" };
-  if (same(existing.narrative, draft.narrative) && same(existing.points, draft.points) && same(existing.coverage, draft.coverage)) {
+  if (same(existing.narrative, draft.narrative) && same(existing.points, draft.points) && same(existing.coverage, draft.coverage)
+    && same(existing.analysis ?? null, draft.analysis ?? null) && (sameConfig(existing.configSnapshot, draft.configSnapshot) || (!existing.configSnapshot && !draft.configSnapshot))) {
     return { action: "unchanged", reason: "identical to the saved report" };
   }
   return { action: "replace", reason: "rerun is at least as complete" };

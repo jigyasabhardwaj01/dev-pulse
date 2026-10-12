@@ -9,6 +9,13 @@ import { buildTrends, rankPainPoints } from "./trend";
 import { generateBrief } from "./brief";
 import { decideBriefWrite, isFrozen, type BriefAction, type BriefDraft } from "./brief-policy";
 import { assessComparison, mergeCoverage, summarizeStatuses, type Comparison, type Coverage, type SourceStatus } from "./coverage";
+import { coarseReason, makeDiagnostics, type Diagnostic } from "./diagnostics";
+import { SOURCE_LABEL } from "./coverage";
+import { analyse, BASELINE_WEEKS, type PriorWeek } from "./analysis";
+import { advance, planFetch, type Checkpoint } from "./checkpoints";
+import { buildFridayBrief, type FridayBrief } from "./friday-brief";
+import { classificationPolicy, effectiveTopic, matchPost, snapshotConfig } from "./watchlist";
+import { formatPeriod } from "./view";
 import { sanitizeError } from "./text";
 import type { Trigger } from "./run-plan";
 import type { ThemeTrend } from "./types";
@@ -21,6 +28,8 @@ export interface EmailArgs {
   points: ThemeTrend[];
   comparison: Comparison;
   coverage: Coverage;
+  /** The structured Friday brief, built from the SAVED version's sealed analysis (never regenerated at send time). Null for reports saved before it existed. */
+  brief?: FridayBrief | null;
 }
 
 /** "sent" may carry the provider's message id for the delivery record. */
@@ -29,7 +38,7 @@ export type SendResult = "sent" | "skipped" | { status: "sent"; messageId?: stri
 export interface Deps {
   store: Store;
   fetchers: Partial<Record<Source, SourceFetcher>>;
-  /** null when Gemini is not configured: classification is skipped and the brief uses the fallback */
+  /** null when the AI provider is not configured: classification is skipped and the brief uses the fallback */
   callModel: ModelCaller | null;
   sendEmail?: (args: EmailArgs) => Promise<SendResult>;
   /** Backfills never email, even if a sender is supplied. Defaults to "scheduled". */
@@ -67,6 +76,8 @@ export interface RunSummary {
   comparison: Comparison;
   sources: Coverage;
   warnings: string[];
+  /** Structured diagnostics with stable codes (safe messages only). Also stored with the run. */
+  diagnostics: Diagnostic[];
 }
 
 export const DEFAULT_BUDGET_MS = 270_000;
@@ -81,16 +92,18 @@ export const BACKLOG_LOOKBACK_DAYS = 84;
 const DAY = 86_400_000;
 
 const errMsg = (e: unknown) => sanitizeError(e);
+type Diag = ReturnType<typeof makeDiagnostics>;
+const srcName = (s: string) => SOURCE_LABEL[s] ?? s;
 
 function normalize(raw: FetchResult | FetchedPost[]): FetchResult {
   return Array.isArray(raw) ? { posts: raw, requests: 1, failed: 0, errors: [], truncated: false } : raw;
 }
 
 /** Monitoring is best-effort: a failure here is noted but must never mask, replace or cause a pipeline error. */
-function makeObserver(store: Store, warnings: string[]) {
+function makeObserver(store: Store, diag: Diag) {
   const note = (what: string, e: unknown) => {
     console.error(`monitoring: ${what} failed: ${errMsg(e)}`);
-    warnings.push(`monitoring: ${what} failed`);
+    diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "run", message: `Run history could not be written (${what}); the pipeline itself was not affected.` }, `monitoring: ${what} failed`);
   };
   return {
     async start(info: Parameters<Store["startRun"]>[0]) {
@@ -133,8 +146,10 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
   const trigger: Trigger = deps.trigger ?? "scheduled";
   const period = periodFor(deps.now ?? new Date());
   const warnings: string[] = [];
-  const obs = makeObserver(store, warnings);
+  const diag = makeDiagnostics(() => Date.now(), warnings);
+  const obs = makeObserver(store, diag);
 
+  let configSnapshotForFailure: ReturnType<typeof snapshotConfig> | undefined;
   const runId = await obs.start({ week_start: period.weekStart, period_start: period.start, period_end: period.end, trigger });
   let fetchRows: SourceFetchRow[] = [];
   let rowsRecorded = false;
@@ -146,8 +161,22 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
 
   try {
     // 2. topics, in a fixed order so overlapping matches are always assigned the same way
-    const topics = orderTopics(await store.getActiveTopics());
+    const watch = await store.getWatchConfig();
+    const sensitivity = watch.sensitivity;
+    const policy = classificationPolicy(sensitivity);
+    // `keywords` of each topic is now the ACTIVE watchlist include terms, so every adapter queries what the owner configured.
+    const topics = orderTopics(await store.getActiveTopics()).map((t) => effectiveTopic(t, watch.terms));
     const topicNames = Object.fromEntries(topics.map((t) => [t.id, t.name]));
+    const configSnapshot = snapshotConfig(topics, sensitivity, deps.now ?? new Date());
+    configSnapshotForFailure = configSnapshot;
+
+    // checkpoints: what has already been collected COMPLETELY and stored (unreadable checkpoints just mean "fetch everything")
+    const cps = new Map<string, Checkpoint>();
+    try {
+      for (const c of await store.getCheckpoints()) cps.set(`${c.source}|${c.topic_id}`, c);
+    } catch (e) {
+      diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "collect", message: "Collection checkpoints could not be read, so every window is fetched in full." }, `checkpoints unreadable: ${errMsg(e)}`);
+    }
 
     // 3. fetch every (topic, source) independently; one failed source never blocks the others
     const sources = Object.keys(fetchers) as Source[];
@@ -155,29 +184,51 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     const outcomes = await Promise.all(
       jobs.map(async ({ t, src }) => {
         const started = clock();
+        const plan = planFetch(cps.get(`${src}|${t.id}`), period);
+        if (plan.action === "skip") {
+          const r: FetchResult = { posts: [], requests: 0, failed: 0, errors: [], truncated: false };
+          return { t, src, r, status: "ok" as SourceStatus, error: null, ms: 0, skipped: true, window: null as { start: Date; end: Date } | null };
+        }
+        const window = plan.window;
         try {
-          const r = normalize(await fetchers[src]!(t, period));
+          const r = normalize(await fetchers[src]!(t, { ...period, start: window.start, end: window.end }));
           const status: SourceStatus = r.requests > 0 && r.failed >= r.requests ? "error" : r.failed > 0 ? "partial" : "ok";
-          return { t, src, r, status, error: r.errors.join("; ") || null, ms: clock() - started };
+          return { t, src, r, status, error: r.errors.join("; ") || null, ms: clock() - started, skipped: false, window: window as { start: Date; end: Date } | null };
         } catch (e) {
           const r: FetchResult = { posts: [], requests: 1, failed: 1, errors: [errMsg(e)], truncated: false };
-          return { t, src, r, status: "error" as SourceStatus, error: errMsg(e), ms: clock() - started };
+          return { t, src, r, status: "error" as SourceStatus, error: errMsg(e), ms: clock() - started, skipped: false, window: window as { start: Date; end: Date } | null };
         }
       }),
     );
 
     // 4. keep posts inside the period that match the topic's keywords (topic-major order => deterministic)
     const fetchedPosts: FetchedPost[] = [];
+    const filtered = { excluded: 0, belowSensitivity: 0 };
     fetchRows = outcomes.map(({ t, src, r, status, error, ms }) => {
-      if (status === "error") warnings.push(`${src} fetch failed for "${t.name}": ${error}`);
-      else if (status === "partial") warnings.push(`${src} fetch partially failed for "${t.name}": ${error}`);
+      if (status === "error" || status === "partial") {
+        const why = coarseReason(error);
+        const auth = /rejected the API credentials/.test(error ?? "");
+        const limited = why === "Rate limited by the source";
+        diag.add({
+          code: auth ? "SOURCE_AUTH" : limited ? "SOURCE_RATE_LIMITED" : status === "error" ? "SOURCE_FAILED" : "SOURCE_PARTIAL",
+          severity: status === "error" ? "error" : "warning", stage: "collect", source: src,
+          message: `${srcName(src)} ${status === "error" ? "failed" : "was only partly collected"} for "${t.name}": ${auth ? "the API credentials were rejected" : (why ?? "unknown reason").toLowerCase()}.`,
+          detail: { requests: r.requests, failed: r.failed, fetched: r.posts.length },
+        }, `${src} fetch ${status === "error" ? "failed" : "partially failed"} for "${t.name}": ${error}`);
+      }
       if (r.truncated) warnings.push(`${src} results for "${t.name}" hit the page limit; more posts may exist`);
       let accepted = 0;
       for (const p of r.posts) {
         const at = new Date(p.posted_at).getTime();
         if (at < period.start.getTime() || at >= period.end.getTime()) continue;
-        if (!matchesKeywords(`${p.title} ${p.body}`, t.keywords)) continue;
-        fetchedPosts.push(p);
+        // the watchlist decides: active terms, exclusions and the sensitivity mode (deterministic; see watchlist.matchPost)
+        const m = matchPost(p, t, sensitivity);
+        if (!m.accepted) {
+          if (m.reason === "excluded") filtered.excluded++;
+          else if (m.reason === "below_sensitivity") filtered.belowSensitivity++;
+          continue;
+        }
+        fetchedPosts.push({ ...p, matched_terms: m.terms, flags: m.flags });
         accepted += 1;
       }
       return {
@@ -185,6 +236,30 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
         fetched: r.posts.length, accepted, inserted: 0, truncated: r.truncated, error, duration_ms: ms,
       };
     });
+
+    // one diagnostic per source (not per topic) for caps, retries and rate-limit waiting
+    for (const src of sources) {
+      const mine = outcomes.filter((o) => o.src === src);
+      const capped = mine.filter((o) => o.r.truncated).length;
+      if (capped) diag.add({ code: "SOURCE_CAPPED", severity: "info", stage: "collect", source: src, message: `${srcName(src)} results hit the page limit for ${capped} of ${mine.length} topics, so its counts may be understated.`, detail: { topics: mine.length, capped } }, null);
+      const retries = mine.reduce((s, o) => s + (o.r.retries ?? 0), 0);
+      const waitedMs = mine.reduce((s, o) => s + (o.r.waitedMs ?? 0), 0);
+      if (retries > 0 || waitedMs > 0) {
+        diag.add({
+          code: retries > 0 ? "SOURCE_RETRIED" : "SOURCE_THROTTLED", severity: "info", stage: "collect", source: src,
+          message: `${srcName(src)}: ${retries > 0 ? `${retries} ${retries === 1 ? "request was" : "requests were"} retried after transient trouble; ` : ""}waited ${Math.round(waitedMs / 1000)} s in total for the provider's rate limit.`,
+          detail: { retries, waitedMs },
+        }, null);
+      }
+    }
+
+    for (const src of sources) {
+      const skipped = outcomes.filter((o) => o.src === src && o.skipped).length;
+      if (skipped) diag.add({ code: "SOURCE_SKIPPED", severity: "info", stage: "collect", source: src, message: `${srcName(src)} was already collected completely for this period (checkpoint), so it was not fetched again for ${skipped} of ${outcomes.filter((o) => o.src === src).length} topics.`, detail: { skipped } }, null);
+    }
+    if (filtered.excluded || filtered.belowSensitivity) {
+      diag.add({ code: "WATCH_FILTERED", severity: "info", stage: "collect", message: `The watchlist removed ${filtered.excluded} ${filtered.excluded === 1 ? "post" : "posts"} by exclusion and ${filtered.belowSensitivity} below the ${sensitivity} evidence threshold.`, detail: { excluded: filtered.excluded, belowSensitivity: filtered.belowSensitivity } }, null);
+    }
 
     // 5-6. dedupe against stored (source, source_id), then insert
     const existing = await store.getExistingKeys(fetchedPosts);
@@ -194,6 +269,16 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       row.inserted = fresh.filter((p) => p.topic_id === row.topic_id && p.source === row.source).length;
     }
     await flushRows();
+
+    // Checkpoints advance ONLY now, after the data they cover was stored. A failure, a partial fetch or a page cap leaves them
+    // where they were, so the next run starts from the same place and nothing is skipped.
+    try {
+      const now = deps.now ?? new Date(); // the run's LOGICAL time (a backfill is "as of" its date), not the wall clock
+      const moved = outcomes.filter((o) => !o.skipped && o.window).map((o) => advance(cps.get(`${o.src}|${o.t.id}`), o.src, o.t.id, o.window!, { status: o.status, truncated: o.r.truncated }, now));
+      await store.saveCheckpoints(moved);
+    } catch (e) {
+      diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "collect", message: "Collection checkpoints could not be saved; the next run fetches these windows again (nothing is skipped)." }, `checkpoints not saved: ${errMsg(e)}`);
+    }
 
     // 7. classify everything still unclassified: this period first, then earlier periods inside the lookback.
     //    A post stranded by an earlier failure is therefore retried by every later run, under its own period and
@@ -211,7 +296,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     let backlogRemaining = unclassified.length - pending;
     const classifyCutoff = t0 + budget - FINALIZE_RESERVE_MS;
     if (unclassified.length && !callModel) {
-      warnings.push("GEMINI not configured: classification skipped");
+      diag.add({ code: "CLASSIFY_NO_MODEL", severity: "error", stage: "classify", message: `Classification was skipped because no OpenRouter API key is configured; ${unclassified.length} posts stay unclassified.`, detail: { waiting: unclassified.length } }, "GEMINI not configured: classification skipped");
     } else if (unclassified.length && callModel) {
       for (const phase of ["current", "earlier"] as const) {
         for (const topic of topics) {
@@ -226,10 +311,15 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
               },
               canStart: () => clock() < classifyCutoff,
               deadline: classifyCutoff + CLASSIFY_GRACE_MS,
+              policy,
             });
+            if (out.failures.length) {
+              try { await store.saveClassificationFailures(out.failures); } catch (e) { warnings.push(`classification failure reasons not saved: ${errMsg(e)}`); }
+            }
             warnings.push(...out.warnings);
+            if (out.warnings.length) diag.add({ code: "CLASSIFY_WARNING", severity: "warning", stage: "classify", message: `Classification reported ${out.warnings.length} ${out.warnings.length === 1 ? "problem" : "problems"} for "${topic.name}" (details in the server logs).`, detail: { count: out.warnings.length } }, null);
           } catch (e) {
-            warnings.push(`classification aborted for "${topic.name}": ${errMsg(e)}`);
+            diag.add({ code: "CLASSIFY_ABORTED", severity: "error", stage: "classify", message: `Classification stopped for "${topic.name}"; its remaining posts stay unclassified and are retried next run.` }, `classification aborted for "${topic.name}": ${errMsg(e)}`);
           }
         }
       }
@@ -237,8 +327,12 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       const left = await store.getUnclassifiedPosts(backlogFrom, period.end);
       pending = left.filter(inPeriod).length;
       backlogRemaining = left.length - pending;
+      if (pending + backlogRemaining > 0) {
+        diag.add({ code: "CLASSIFY_PENDING", severity: "warning", stage: "classify", message: `${pending} ${pending === 1 ? "post" : "posts"} in this period and ${backlogRemaining} from earlier periods are waiting for classification.`, detail: { pending, backlogRemaining } }, null);
+        if (clock() >= classifyCutoff) diag.add({ code: "RUN_BUDGET", severity: "warning", stage: "run", message: "The run's time budget was reached, so it stopped starting new classification work." }, null);
+      }
     }
-    if (recovered) warnings.push(`recovered ${recovered} unclassified post(s) from earlier periods`);
+    if (recovered) diag.add({ code: "CLASSIFY_RECOVERED", severity: "info", stage: "classify", message: `Recovered ${recovered} unclassified ${recovered === 1 ? "post" : "posts"} from earlier periods.`, detail: { recovered } }, `recovered ${recovered} unclassified post(s) from earlier periods`);
 
     // 8. reconcile earlier reported periods: late-classified posts are folded into their own period's counts.
     //    Counts only ever grow (growOnly), come from stored classifications as they were made (no re-folding under a
@@ -299,7 +393,12 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       const { narrative, usedFallback } = await generateBrief(
         trends, { pending, warnings }, callModel, comparison.state, t0 + budget - NARRATIVE_MARGIN_MS,
       );
-      const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison }, pendingCount: pending, usedFallback };
+      if (usedFallback) diag.add({ code: "SUMMARY_FALLBACK", severity: "warning", stage: "summary", message: "The AI summary was unavailable, so the summary was written from a template. The numbers are unaffected." }, null);
+      // the sealed analysis: aggregation, ranking, baseline and limitations, built from stored evidence and earlier weeks
+      let prior: PriorWeek[] = [];
+      try { prior = await store.getPriorWeeks(period.weekStart, BASELINE_WEEKS); } catch (e) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "summary", message: "Earlier weeks could not be read, so no baseline is shown in this report." }, `prior weeks unreadable: ${errMsg(e)}`); }
+      const analysis = analyse({ weekStart: period.weekStart, posts: await store.getEvidencePosts(period.start, period.end), trends, topicNames, coverage, comparison: comparison.state, prior, pendingPosts: pending });
+      const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison }, pendingCount: pending, usedFallback, configSnapshot, analysis };
       const decision = decideBriefWrite(savedBefore, draft);
       action = decision.action;
       reason = decision.reason;
@@ -313,10 +412,16 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     }
     const saved = await store.getBrief(period.weekStart);
     if (!saved) throw new Error("saved report not found after writing it");
+    diag.add({ code: "REPORT_SAVED", severity: "info", stage: "persist", message: `Report ${period.weekStart}: ${action === "create" ? "created" : action === "replace" ? "replaced with a newer version" : action === "unchanged" ? "unchanged" : "kept as already saved"} (version ${saved.version}).`, detail: { action, version: saved.version, pending } }, null);
 
     // 12. email: scheduled runs only, at most once per reporting week, built from the SAVED version
     let email: EmailOutcome = "not_attempted";
-    if (deps.sendEmail && trigger === "scheduled") {
+    // A delivered report is frozen for good. With no AI provider configured, nothing new could be classified and the summary is a
+    // template, so delivering now would permanently freeze a degraded report. Keep it saved and unsent; once the provider is
+    // configured, a manual trigger for the same period regenerates it (it is not frozen) and sends it exactly once.
+    const withheld = Boolean(deps.sendEmail) && trigger === "scheduled" && !callModel;
+    if (withheld) diag.add({ code: "EMAIL_WITHHELD", severity: "error", stage: "email", message: "The report was saved but not emailed, because the AI provider is not configured and the report would be incomplete. It stays unsent so it can be regenerated and delivered once, after the provider is fixed." }, null);
+    if (deps.sendEmail && trigger === "scheduled" && !withheld) {
       email = await deliverOnce(store, deps.sendEmail, {
         weekStart: period.weekStart,
         version: saved.version,
@@ -324,14 +429,15 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
         points: saved.points,
         comparison: saved.coverage.comparison,
         coverage: saved.coverage.sources,
-      }, warnings, deps.sleep);
+        brief: saved.analysis ? buildFridayBrief({ weekStart: period.weekStart, periodLabel: formatPeriod(period.weekStart), analysis: saved.analysis, narrative: saved.narrative, usedFallback: saved.usedFallback }) : null,
+      }, diag, deps.sleep);
     }
 
-    const problems = outcomes.some((o) => o.status !== "ok") || pending > 0 || backlogRemaining > 0 || email === "failed" || email === "unconfirmed";
+    const problems = outcomes.some((o) => o.status !== "ok") || pending > 0 || backlogRemaining > 0 || email === "failed" || email === "unconfirmed" || withheld;
     const status: RunStatus = problems ? "partial" : "succeeded";
     await obs.finish(runId, {
       status, fetched_total: fetchedPosts.length, new_posts: fresh.length, classified_ok: classified,
-      classification_failed: pending + backlogRemaining, used_fallback: saved.usedFallback, email_status: email, warnings,
+      classification_failed: pending + backlogRemaining, used_fallback: saved.usedFallback, email_status: email, warnings, diagnostics: diag.items, config_snapshot: configSnapshot,
     });
 
     return {
@@ -340,12 +446,13 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       topics: topics.length, fetched: fetchedPosts.length, newPosts: fresh.length, classified, pending, backlogRemaining,
       recoveredFromEarlierPeriods: recovered, trends: trends.length, usedFallbackNarrative: saved.usedFallback,
       brief: { action, version: saved.version, reason },
-      email, comparison: saved.coverage.comparison, sources: coverage, warnings,
+      email, comparison: saved.coverage.comparison, sources: coverage, warnings, diagnostics: diag.items,
     };
   } catch (e) {
     // Record the failure, then surface the ORIGINAL error. Recording problems are only noted.
     await flushRows();
-    await obs.finish(runId, { status: "failed", warnings, error: errMsg(e) });
+    diag.add({ code: "RUN_FAILED", severity: "error", stage: "run", message: "The run failed before it could complete. See the server logs for the cause." }, null);
+    await obs.finish(runId, { status: "failed", warnings, diagnostics: diag.items, ...(configSnapshotForFailure ? { config_snapshot: configSnapshotForFailure } : {}), error: errMsg(e) });
     throw e;
   }
 }
@@ -373,24 +480,24 @@ async function deliverOnce(
   store: Store,
   send: NonNullable<Deps["sendEmail"]>,
   args: EmailArgs,
-  warnings: string[],
+  diag: Diag,
   sleep: (ms: number) => Promise<void> = realSleep,
 ): Promise<EmailOutcome> {
   let claim;
   try {
     claim = await store.claimEmail(args.weekStart);
   } catch (e) {
-    warnings.push(`email not sent: could not check delivery state (${errMsg(e)})`); // fail closed: never send unguarded
+    diag.add({ code: "EMAIL_STATE_CHECK_FAILED", severity: "error", stage: "email", message: "Email not sent: the delivery state could not be checked, so nothing was sent." }, `email not sent: could not check delivery state (${errMsg(e)})`); // fail closed: never send unguarded
     return "failed";
   }
-  if (claim === "already_sent") return "already_sent";
+  if (claim === "already_sent") { diag.add({ code: "EMAIL_ALREADY_SENT", severity: "info", stage: "email", message: "This week's report was already emailed, so nothing was sent again." }, null); return "already_sent"; }
   if (claim === "in_progress") return "in_progress";
   if (claim === "unconfirmed") {
-    warnings.push("email not sent: an earlier delivery attempt for this week is unconfirmed and is too old to retry safely; check the inbox before resending");
+    diag.add({ code: "EMAIL_UNCONFIRMED", severity: "error", stage: "email", message: "Email not sent: an earlier delivery attempt for this week is unconfirmed and too old to retry safely. Check the inbox before resending." }, "email not sent: an earlier delivery attempt for this week is unconfirmed and is too old to retry safely; check the inbox before resending");
     return "unconfirmed";
   }
   if (claim === "no_brief") {
-    warnings.push("email not sent: brief row missing");
+    diag.add({ code: "EMAIL_BRIEF_MISSING", severity: "error", stage: "email", message: "Email not sent: the saved report could not be found." }, "email not sent: brief row missing");
     return "failed";
   }
 
@@ -403,26 +510,27 @@ async function deliverOnce(
       const ambiguous = e instanceof EmailSendError && !e.definite;
       if (ambiguous && attempt < SEND_BACKOFF_MS.length) { await sleep(SEND_BACKOFF_MS[attempt]); continue; }
       if (ambiguous) {
-        warnings.push(`email outcome unknown after ${attempt + 1} attempts (${errMsg(e)}); claim kept so it is not resent after the provider forgets the key`);
+        diag.add({ code: "EMAIL_OUTCOME_UNKNOWN", severity: "error", stage: "email", message: `The email provider did not confirm the send after ${attempt + 1} attempts. The claim is kept so it is not resent after the provider forgets the key.`, detail: { attempts: attempt + 1 } }, `email outcome unknown after ${attempt + 1} attempts (${errMsg(e)}); claim kept so it is not resent after the provider forgets the key`);
         return "unconfirmed";
       }
-      warnings.push(`email failed: ${errMsg(e)}`);
-      try { await store.markEmailFailed(args.weekStart, errMsg(e)); } catch (m) { warnings.push(`monitoring: markEmailFailed failed (${errMsg(m)})`); }
+      diag.add({ code: "EMAIL_FAILED", severity: "warning", stage: "email", message: "The email provider rejected the message. It will be retried by the next scheduled run." }, `email failed: ${errMsg(e)}`);
+      try { await store.markEmailFailed(args.weekStart, errMsg(e)); } catch (m) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "email", message: "The failed-email state could not be recorded." }, `monitoring: markEmailFailed failed (${errMsg(m)})`); }
       return "failed";
     }
   }
   if (result === "skipped") {
-    try { await store.releaseEmailClaim(args.weekStart); } catch (m) { warnings.push(`monitoring: releaseEmailClaim failed (${errMsg(m)})`); }
+    try { await store.releaseEmailClaim(args.weekStart); } catch (m) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "email", message: "The email claim could not be released." }, `monitoring: releaseEmailClaim failed (${errMsg(m)})`); }
     return "skipped";
   }
   const messageId = typeof result === "object" ? (result.messageId ?? null) : null;
   for (let attempt = 0; ; attempt++) {
     try {
       await store.markEmailSent(args.weekStart, args.version, messageId);
+      diag.add({ code: "EMAIL_SUBMITTED", severity: "info", stage: "email", message: `The provider accepted the email for report version ${args.version}. Inbox delivery is not observable here.`, detail: { version: args.version } }, null);
       return "sent";
     } catch (m) {
       if (attempt < MARK_BACKOFF_MS.length) { await sleep(MARK_BACKOFF_MS[attempt]); continue; }
-      warnings.push(`email was accepted but could not be recorded as sent after ${attempt + 1} attempts (${errMsg(m)}); claim kept (not resent automatically once the provider's key window passes)`);
+      diag.add({ code: "EMAIL_MARK_SENT_FAILED", severity: "warning", stage: "email", message: `The email was accepted but could not be recorded as sent after ${attempt + 1} attempts. The claim is kept; it is not resent automatically once the provider's key window passes.`, detail: { attempts: attempt + 1 } }, `email was accepted but could not be recorded as sent after ${attempt + 1} attempts (${errMsg(m)}); claim kept (not resent automatically once the provider's key window passes)`);
       return "sent";
     }
   }

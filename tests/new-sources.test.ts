@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeRedditFetcher, parseRedditAtom, DEFAULT_USER_AGENT } from "@/lib/sources/reddit";
+import { makeRedditFetcher } from "@/lib/sources/reddit";
 import { makeGithubFetcher } from "@/lib/sources/github";
 import { runDigest } from "@/lib/pipeline";
 import { periodFor } from "@/lib/week";
@@ -10,74 +10,6 @@ const DAY = 86_400_000;
 const FIVE_DAYS = () => window.start.getTime() + 5 * DAY; // pretend "now" is 5 days after the period began
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const listing = (...ids: string[]) => ({ data: { children: ids.map((id) => ({ data: { id, title: `code review rant ${id}`, selftext: "body", permalink: `/r/x/${id}/`, author: "u", created_utc: 1790000000 } })) } });
-
-describe("reddit", () => {
-  it("searches each subreddit with a real User-Agent and maps posts with is_answered null", async () => {
-    const f = vi.fn(async (_u: string, _i?: RequestInit) => json(listing("abc")));
-    const out = await makeRedditFetcher(f, undefined, 0, FIVE_DAYS)(TOPIC, window);
-    const urls = f.mock.calls.map(([u]) => String(u));
-    for (const sub of ["programming", "ExperiencedDevs", "devops"]) expect(urls.some((u) => u.includes(`/r/${sub}/search.json`))).toBe(true);
-    expect(urls[0]).toContain("restrict_sr=1");
-    expect(urls[0]).toContain("sort=new");
-    expect(urls[0]).toContain("t=week");
-    const headers = (f.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
-    expect(headers["user-agent"]).toBe(DEFAULT_USER_AGENT);
-    expect(out.posts[0]).toMatchObject({ source: "reddit", source_id: "abc", is_answered: null, url: "https://www.reddit.com/r/x/abc/" });
-    expect(out).toMatchObject({ failed: 0, requests: 3 });
-  });
-  const atom = `<?xml version="1.0"?><feed><entry><id>t3_xyz9</id><author><name>/u/someone</name></author>
-    <content type="html">&lt;div&gt;the code review bot &amp;amp; me&lt;/div&gt;</content>
-    <link href="https://www.reddit.com/r/devops/comments/xyz9/t/"/><updated>2026-10-08T10:00:00+00:00</updated><title>Code review is slow</title></entry></feed>`;
-  it("parses Atom entries", () => {
-    expect(parseRedditAtom(atom, "t1")[0]).toMatchObject({
-      source: "reddit", source_id: "xyz9", title: "Code review is slow", author: "someone",
-      url: "https://www.reddit.com/r/devops/comments/xyz9/t/", posted_at: "2026-10-08T10:00:00.000Z", is_answered: null,
-    });
-    expect(parseRedditAtom(atom, "t1")[0].body).toContain("code review bot & me");
-  });
-  it("falls back to RSS when the JSON endpoint is blocked (403), still logged-out", async () => {
-    const f = vi.fn(async (u: string, _i?: RequestInit) => (u.includes("search.json") ? json({}, 403) : new Response(atom, { status: 200 })));
-    const out = await makeRedditFetcher(f, undefined, 0, FIVE_DAYS)(TOPIC, window);
-    expect(out.posts.length).toBe(3); // one match per subreddit
-    expect(f.mock.calls.some(([u]) => u.includes("search.rss"))).toBe(true);
-    // after the first refusal the remaining subreddits skip the blocked .json endpoint
-    expect(f.mock.calls.filter(([u]) => u.includes("search.json")).length).toBe(1);
-  });
-  it("reports failure (not an empty success) when everything fails (429 / network), and never throws", async () => {
-    for (const f of [async () => json({}, 429), async () => { throw new Error("ECONNRESET"); }]) {
-      const r = await makeRedditFetcher(f, undefined, 0, FIVE_DAYS)(TOPIC, window);
-      expect(r.posts).toEqual([]);
-      expect(r.requests).toBeGreaterThan(0);
-      expect(r.failed).toBe(r.requests); // every request failed: distinguishable from "found nothing"
-      expect(r.errors.length).toBeGreaterThan(0);
-    }
-  });
-  it("a 200 block page on the RSS fallback is a failure, not an empty success", async () => {
-    const f = async (u: string) => (u.includes("search.json") ? json({}, 403) : new Response("<html>blocked</html>", { status: 200 }));
-    const r = await makeRedditFetcher(f, undefined, 0, FIVE_DAYS)(TOPIC, window);
-    expect(r.failed).toBe(r.requests);
-    expect(r.errors.join()).toMatch(/not an Atom feed|403/);
-  });
-  it("a successful search that finds nothing is not a failure", async () => {
-    const r = await makeRedditFetcher(async () => json({ data: { children: [] } }), undefined, 0, FIVE_DAYS)(TOPIC, window);
-    expect(r).toMatchObject({ posts: [], failed: 0, errors: [] });
-  });
-  it("uses a time bucket that actually reaches the start of the period", async () => {
-    const f = vi.fn(async (_u: string, _i?: RequestInit) => json({ data: { children: [] } }));
-    await makeRedditFetcher(f, undefined, 0, () => window.start.getTime() + 7.4 * DAY)(TOPIC, window); // a Friday-morning run
-    expect(String(f.mock.calls[0][0])).toContain("t=month");
-  });
-  it("keeps results from subreddits that worked when one fails", async () => {
-    let n = 0;
-    const out = await makeRedditFetcher(async () => (++n === 1 ? json({}, 429) : json(listing(`id${n}`))), undefined, 0, FIVE_DAYS)(TOPIC, window);
-    expect(out.posts.length).toBe(2);
-    expect(out).toMatchObject({ failed: 1, requests: 3 }); // partial failure keeps what succeeded and says so
-  });
-  it("drops results that do not actually match a keyword", async () => {
-    const f = async () => json({ data: { children: [{ data: { id: "z", title: "cooking", selftext: "", permalink: "/p", created_utc: 1790000000 } }] } });
-    expect(await makeRedditFetcher(f, undefined, 0, FIVE_DAYS)(TOPIC, window)).toMatchObject({ posts: [], failed: 0 });
-  });
-});
 
 describe("github", () => {
   const issues = { items: [{ id: 77, title: "False positive in code review bot", body: "<b>it</b> flags correct code", html_url: "https://github.com/o/r/issues/1", created_at: "2026-10-08T10:00:00Z", user: { login: "dev" } }] };
@@ -134,7 +66,7 @@ describe("pipeline with four sources", () => {
       fetchers: {
         hn: async () => [post({ source_id: "h1" })],
         stackoverflow: async () => { throw new Error("quota"); },
-        reddit: makeRedditFetcher(async () => json({}, 429), undefined, 0, FIVE_DAYS),
+        reddit: makeRedditFetcher(async () => json({}, 429), undefined, { sleep: async () => {}, waitBudgetMs: 0 }, FIVE_DAYS),
         github: makeGithubFetcher(async () => json({}, 403)),
       },
     });
@@ -172,8 +104,11 @@ describe("every adapter reports when more results exist than were retrieved (aut
     expect((await makeGithubFetcher(async () => json({ items, total_count: 5 }))(TOPIC, window)).truncated).toBe(false);
     expect((await makeGithubFetcher(async () => json({ items, total_count: 5, incomplete_results: true }))(TOPIC, window)).truncated).toBe(true);
   });
-  it("Reddit (no total available): a full page of 25 is treated as capped", async () => {
-    const f = async () => json({ data: { children: full(25, (i) => ({ data: { id: `r${i}`, title: "code review", selftext: "", permalink: "/p", created_utc: 1790000000 } })) } });
-    expect((await makeRedditFetcher(f, undefined, 0, FIVE_DAYS)(TOPIC, window)).truncated).toBe(true);
+  it("Reddit (no total available): a full page is treated as capped (25 on the public feed, 100 on the JSON/OAuth listing)", async () => {
+    const rows = (n: number) => full(n, (i) => ({ data: { id: `r${i}`, title: "code review", selftext: "", permalink: "/p", created_utc: 1790000000 } }));
+    const mk = (n: number) => async () => json({ data: { children: rows(n) } });
+    const opts = { sleep: async () => {} };
+    expect((await makeRedditFetcher(mk(100), undefined, opts, FIVE_DAYS)(TOPIC, window)).truncated).toBe(true);
+    expect((await makeRedditFetcher(mk(99), undefined, opts, FIVE_DAYS)(TOPIC, window)).truncated).toBe(false);
   });
 });

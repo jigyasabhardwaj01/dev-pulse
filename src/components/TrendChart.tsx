@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-/** Okabe-Ito based palette: distinguishable for the common kinds of colour blindness. */
-const COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#7A6BCF", "#6B7280"];
+/** Distinct hues on the dark canvas; points are also distinguishable by their legend order and the data table below. */
+const COLORS = ["#E567D7", "#7A83FF", "#5FD9A0", "#F5B454", "#C32BBD", "#56B4E9", "#FF8294", "#B8A9C9"];
 
 export interface ChartRow { week: string; label: string; state: string; [series: string]: string | number }
 
@@ -30,15 +30,15 @@ export default function TrendChart({ series, rows }: { series: string[]; rows: C
           </button>
         ))}
       </div>
-      <div role="img" aria-label="Line chart of mentions per pain point for each reporting week. The same data is available as a table below." style={{ width: "100%", height: 340 }}>
+      <div role="img" aria-label="Line chart of mentions per pain point for each reporting week. The same data is available as a table below." style={{ width: "100%", height: 320 }}>
         <ResponsiveContainer>
           <LineChart data={rows} margin={{ top: 10, right: 16, bottom: 4, left: -8 }}>
-            <CartesianGrid vertical={false} stroke="var(--border)" />
+            <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 5" />
             <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: "var(--border-strong)" }} tick={{ fill: "var(--muted)", fontSize: 12 }} />
             <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: "var(--muted)", fontSize: 12 }} width={40} />
             <Tooltip
               cursor={{ stroke: "var(--border-strong)" }}
-              contentStyle={{ background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: 8, color: "var(--text)" }}
+              contentStyle={{ background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: 10, color: "var(--text)", fontSize: 12 }}
               labelFormatter={(_l, payload) => {
                 const row = payload?.[0]?.payload as ChartRow | undefined;
                 return row ? `Week of ${row.week} · ${STATE_NOTE[row.state] ?? ""}` : "";

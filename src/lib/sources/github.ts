@@ -1,7 +1,7 @@
 import type { FetchLike, FetchResult, FetchWindow, FetchedPost, Topic } from "../types";
-import { matchesKeywords } from "../matching";
+import { matchAll } from "../matching";
 import { stripHtml, truncate } from "../text";
-import { getJson, settleRequests, toResult } from "./http";
+import { getJson, settleRequests, toResult, type RetryStats } from "./http";
 
 interface GhSearch {
   total_count?: number;
@@ -24,11 +24,12 @@ const stamp = (d: Date) => d.toISOString().slice(0, 19) + "Z";
 
 /**
  * GitHub Issues search. Works with no token (low rate limit); GITHUB_TOKEN, if given, raises it.
- * Contract: never throws, returns [] on any failure (rate limit included).
+ * Failures are reported in the result (never swallowed), so a rate limit is distinguishable from "no matches".
  */
-export function makeGithubFetcher(fetchImpl: FetchLike = fetch, token?: string) {
+export function makeGithubFetcher(fetchImpl: FetchLike = fetch, token?: string, sleep?: (ms: number) => Promise<void>) {
   return async function fetchGithub(topic: Topic, window: FetchWindow): Promise<FetchResult> {
     let truncated = false;
+    const stats: RetryStats = { retries: 0, waitedMs: 0 };
     const keywords = topic.keywords.map((k) => k.trim()).filter(Boolean);
     const from = stamp(window.start);
     const to = stamp(new Date(window.end.getTime() - 1000));
@@ -48,7 +49,7 @@ export function makeGithubFetcher(fetchImpl: FetchLike = fetch, token?: string) 
           order: "desc",
           per_page: String(PER_PAGE),
         });
-        const data = await getJson<GhSearch>(`https://api.github.com/search/issues?${params}`, fetchImpl, headers);
+        const data = await getJson<GhSearch>(`https://api.github.com/search/issues?${params}`, fetchImpl, headers, { stats, sleep });
         // Authoritative: the API says how many issues match in total. Guessing from the row count missed real caps.
         const got = (data.items ?? []).length;
         if (data.incomplete_results || (typeof data.total_count === "number" ? data.total_count > got : got >= PER_PAGE)) truncated = true;
@@ -67,6 +68,6 @@ export function makeGithubFetcher(fetchImpl: FetchLike = fetch, token?: string) 
     }
     // Errors are reported, never swallowed: a failed request must not look like an empty result.
     const settled = await settleRequests(tasks);
-    return toResult(settled, (p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords), truncated);
+    return toResult(settled, (p) => matchAll(`${p.title} ${p.body}`, topic.keywords, true).length > 0, truncated, stats);
   };
 }

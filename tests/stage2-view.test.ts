@@ -117,6 +117,23 @@ describe("history rows", () => {
   });
 });
 
+describe("report list items (History comparison)", () => {
+  const pts = [
+    { topic_id: "a", topic_name: "A", theme: "x", count: 9, previous: 3, direction: "up" as const, pct: 200, unresolved_count: 1, unresolved: false },
+    { topic_id: "a", topic_name: "A", theme: "y", count: 3, previous: 0, direction: "new" as const, pct: null, unresolved_count: 0, unresolved: false },
+    { topic_id: "a", topic_name: "A", theme: "z", count: 1, previous: 6, direction: "down" as const, pct: -83.3, unresolved_count: 0, unresolved: false },
+  ];
+  const brief = (state: "comparable" | "incomparable" | "no_prior") => ({ week_start: "2026-10-02", narrative: "n", top_pain_points: pts, created_at: "2026-10-09T03:40:00Z", version: 1, coverage: { sources: {}, comparison: { state, reasons: [] } } });
+  const period = { week_start: "2026-10-02", period_start: "2026-10-01T18:30:00Z", period_end: "2026-10-08T18:30:00Z", coverage: null };
+  it("counts new, rising and declining pain points for a fair comparison", () => {
+    expect(toListItem(brief("comparable"), period)).toMatchObject({ emerging: 1, rising: 1, declining: 1, narrative: "n" });
+  });
+  it("gives null, never zero, when the comparison is withheld or there is no baseline", () => {
+    for (const s of ["incomparable", "no_prior"] as const) expect(toListItem(brief(s), period)).toMatchObject({ emerging: null, rising: null, declining: null });
+    expect(toListItem({ ...brief("comparable"), coverage: null }, null)).toMatchObject({ emerging: null, rising: null, declining: null });
+  });
+});
+
 describe("pipeline run view", () => {
   const run = (over: Partial<RunDbRow> = {}): RunDbRow => ({ id: "r1", week_start: "2026-10-02", trigger: "scheduled", status: "partial", started_at: "2026-10-09T03:30:00Z", finished_at: "2026-10-09T03:31:30Z", email_status: "sent", used_fallback: false, error: null, ...over });
   const f = (source: string, status: "ok" | "partial" | "error", n = 1, extra = {}) => ({ run_id: "r1", source, status, fetched: n, accepted: n, inserted: n, truncated: false, error: null as string | null, ...extra });

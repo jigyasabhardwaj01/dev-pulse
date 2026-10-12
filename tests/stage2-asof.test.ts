@@ -72,10 +72,11 @@ describe("asOf: valid backfills are unaffected", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The route handler: auth, validation and wiring, with the pipeline and external services replaced.
-const runDigest = vi.fn(async (d: { trigger?: string }) => ({ ok: true, trigger: d.trigger }));
+const runDigest = vi.fn(async (d: { trigger?: string }) => ({ status: "succeeded", trigger: d.trigger, weekStart: "2026-10-02", fetched: 0, newPosts: 0, classified: 0, pending: 0, backlogRemaining: 0, email: "not_attempted", brief: { action: "keep", version: 1, reason: "x" }, sources: {}, diagnostics: [] }));
+const hasActiveRun = vi.fn(async (_w: string, _ms: number) => false);
 vi.mock("@/lib/pipeline", () => ({ runDigest: (d: never) => runDigest(d) }));
-vi.mock("@/lib/store", () => ({ makeSupabaseStore: () => ({}) }));
-vi.mock("@/lib/gemini", () => ({ geminiFromEnv: () => async () => "x" }));
+vi.mock("@/lib/store", () => ({ makeSupabaseStore: () => ({ hasActiveRun }) }));
+vi.mock("@/lib/openrouter", () => ({ openRouterFromEnv: () => async () => "x" }));
 vi.mock("@/lib/email", () => ({ sendBriefEmail: vi.fn(async () => "sent") }));
 
 describe("route handler /api/cron/weekly-digest", async () => {
@@ -122,10 +123,61 @@ describe("route handler /api/cron/weekly-digest", async () => {
     expect(arg.trigger).toBe("scheduled");
     expect(typeof arg.sendEmail).toBe("function");
   }));
-  it("500 with the error message when the pipeline throws", withSecret("s3cret", async () => {
-    runDigest.mockRejectedValueOnce(new Error("db down"));
+  it("500 with a SANITIZED error when the pipeline throws: no URLs, keys or tokens leak", withSecret("s3cret", async () => {
+    runDigest.mockRejectedValueOnce(new Error("db down at https://db.secret.supabase.co/rest?apikey=ABCDEF123456 Bearer tok.en.value"));
     const res = await call("");
     expect(res.status).toBe(500);
-    expect(await res.json()).toMatchObject({ ok: false, error: "db down" });
+    const body = JSON.stringify(await res.json());
+    expect(body).toContain('"ok":false');
+    for (const bad of ["ABCDEF123456", "tok.en.value", "https://", "apikey"]) expect(body).not.toContain(bad);
+  }));
+  it("a trigger for a period that is already running is skipped with 202 and does no work", withSecret("s3cret", async () => {
+    hasActiveRun.mockResolvedValueOnce(true);
+    const res = await call("");
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ ok: true, skipped: "run_in_progress" });
+    expect(runDigest).not.toHaveBeenCalled();
+    const [week, windowMs] = hasActiveRun.mock.calls.at(-1)!;
+    expect(week).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(windowMs).toBe(6 * 60_000);
+  }));
+  it("the in-progress check is made for the period being run (a backfill checks its own period)", withSecret("s3cret", async () => {
+    await call("?asOf=2026-10-02");
+    expect(hasActiveRun.mock.calls.at(-1)![0]).toBe("2026-09-25");
+  }));
+  it("if the in-progress check itself fails, the run proceeds (the report and email guards still prevent duplicate outcomes)", withSecret("s3cret", async () => {
+    hasActiveRun.mockRejectedValueOnce(new Error("db blip"));
+    const res = await call("");
+    expect(res.status).toBe(200);
+    expect(runDigest).toHaveBeenCalledTimes(1);
+  }));
+  it("returns 200 with the run's own status for a partial run, and a clean, small log line with no secrets", withSecret("s3cret", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    runDigest.mockResolvedValueOnce({ status: "partial", trigger: "scheduled", weekStart: "2026-10-09", fetched: 5, newPosts: 3, classified: 3, pending: 0, backlogRemaining: 0, email: "sent", brief: { action: "create", version: 1, reason: "x" }, sources: { reddit: { status: "partial", posts: 1 } }, diagnostics: [{ code: "SOURCE_PARTIAL", severity: "warning" }, { code: "REPORT_SAVED", severity: "info" }] } as never);
+    const res = await call("");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: "partial" });
+    const line = String(log.mock.calls.at(-1)![0]);
+    expect(JSON.parse(line)).toMatchObject({ event: "weekly_digest", outcome: "partial", email: "sent", sources: { reddit: "partial" }, diagnostics: ["SOURCE_PARTIAL"] });
+    expect(line).not.toMatch(/s3cret|Bearer|apikey/i);
+    log.mockRestore();
+  }));
+  it("never touches the store or the pipeline for an unauthenticated request", withSecret("s3cret", async () => {
+    hasActiveRun.mockClear();
+    await call("", null);
+    expect(hasActiveRun).not.toHaveBeenCalled();
+    expect(runDigest).not.toHaveBeenCalled();
+  }));
+  it("two simultaneous triggers: only the first runs while the second sees it in progress", withSecret("s3cret", async () => {
+    let active = false;
+    hasActiveRun.mockImplementation(async () => active);
+    runDigest.mockImplementationOnce(async (d) => { active = true; await new Promise((r) => setTimeout(r, 20)); active = false; return { status: "succeeded", trigger: d.trigger, weekStart: "2026-10-02", fetched: 0, newPosts: 0, classified: 0, pending: 0, backlogRemaining: 0, email: "sent", brief: { action: "create", version: 1, reason: "x" }, sources: {}, diagnostics: [] }; });
+    const first = call("");
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await call("");
+    expect(second.status).toBe(202);
+    expect((await first).status).toBe(200);
+    expect(runDigest).toHaveBeenCalledTimes(1);
+    hasActiveRun.mockReset(); hasActiveRun.mockResolvedValue(false);
   }));
 });

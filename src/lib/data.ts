@@ -40,6 +40,16 @@ export async function getReport(weekStart?: string): Promise<ReportView | null> 
   return data ? buildReportView(data as BriefDbRow, periods.get(target) ?? null, keys.ist) : null;
 }
 
+/**
+ * Does a saved report exist for this key? A cheap existence check so a page can return a genuine 404 BEFORE it starts streaming.
+ * Throws on a database error; callers decide how to degrade (the pages treat that as "exists" and show their own error state).
+ */
+export async function hasReport(weekStart: string): Promise<boolean> {
+  const { data, error } = await supabaseFromEnv().from("briefs").select("week_start").eq("week_start", weekStart).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data !== null;
+}
+
 /** Every saved report, newest first: reports under the IST convention, then the earlier-format ones. */
 export async function listReports(): Promise<ReportListItem[]> {
   const db = supabaseFromEnv();
@@ -117,7 +127,7 @@ export async function getRecentRuns(limit = 8): Promise<RunView[] | null> {
   if (runs.error) return null;
   const list = (runs.data ?? []) as RunDbRow[];
   if (!list.length) return [];
-  const f = await db.from("source_fetches").select("run_id, source, status, fetched, accepted, inserted, truncated, error").in("run_id", list.map((r) => r.id));
+  const f = await db.from("source_fetches").select("run_id, source, status, requests, failed_requests, fetched, accepted, inserted, truncated, error, duration_ms").in("run_id", list.map((r) => r.id));
   const fetches = (f.error ? [] : f.data) as FetchDbRow[];
   return list.map((r) => summarizeRun(r, fetches));
 }

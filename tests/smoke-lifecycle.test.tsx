@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import PainPointGroups from "@/components/PainPointGroups";
+import PainPointTable from "@/components/PainPointTable";
 import { runDigest, type EmailArgs } from "@/lib/pipeline";
 import { renderBriefHtml } from "@/lib/email";
 import { buildReportView, displayPoints, type BriefDbRow } from "@/lib/report-model";
@@ -58,7 +58,7 @@ describe("smoke: four Fridays end to end", () => {
     expect(w3.comparison.state).toBe("incomparable");
     const v3 = dashboardView(store, w3.weekStart);
     expect(displayPoints(v3).every((p) => p.direction === "unavailable")).toBe(true);
-    expect(renderToStaticMarkup(<PainPointGroups points={displayPoints(v3)} weekStart={w3.weekStart} />)).not.toMatch(ARROWS);
+    expect(renderToStaticMarkup(<PainPointTable points={displayPoints(v3)} weekStart={w3.weekStart} />)).not.toMatch(ARROWS);
     expect(v3.stats.mentions).toBe(10); // 4 HN + 6 GitHub, all counted
 
     // WEEK 4 (Fri 30 Oct): same sources again; the email provider fails once, then the retry succeeds.
