@@ -1,5 +1,5 @@
 import type { FetchLike, FetchResult, FetchWindow, FetchedPost, Topic } from "../types";
-import { matchesKeywords } from "../matching";
+import { matchAll } from "../matching";
 import { stripHtml, truncate } from "../text";
 import { getJson, settleRequests, toResult, type RetryStats } from "./http";
 
@@ -68,6 +68,6 @@ export function makeGithubFetcher(fetchImpl: FetchLike = fetch, token?: string, 
     }
     // Errors are reported, never swallowed: a failed request must not look like an empty result.
     const settled = await settleRequests(tasks);
-    return toResult(settled, (p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords), truncated, stats);
+    return toResult(settled, (p) => matchAll(`${p.title} ${p.body}`, topic.keywords, true).length > 0, truncated, stats);
   };
 }

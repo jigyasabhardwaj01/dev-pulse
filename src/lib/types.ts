@@ -26,13 +26,28 @@ export interface FetchedPost {
   author: string | null;
   posted_at: string; // ISO
   is_answered: boolean | null; // stack overflow only
+  /** Watchlist terms this post matched, and how (see watchlist.matchPost). Set when the post is collected. */
+  matched_terms?: string[];
+  flags?: string[];
 }
+
+export type PostKind = "existing_problem" | "improvement_request" | "workaround" | "resolved_issue" | "discussion";
+export const POST_KINDS: PostKind[] = ["existing_problem", "improvement_request", "workaround", "resolved_issue", "discussion"];
+export type Resolution = "open" | "resolved" | "uncertain";
 
 export interface StoredPost extends FetchedPost {
   id: string;
   theme: string | null;
   sentiment: Sentiment | null;
   unresolved: boolean | null;
+  // classification v2 (all null on posts classified before it existed)
+  relevant?: boolean | null;
+  confidence?: number | null;
+  problem?: string | null;
+  excerpt?: string | null;
+  post_kind?: PostKind | null;
+  resolution?: Resolution | null;
+  classification_version?: number | null;
 }
 
 export interface Classification {
@@ -40,6 +55,15 @@ export interface Classification {
   theme: string;
   sentiment: Sentiment;
   unresolved: boolean;
+  /** v2: false means the post is noise for this topic (theme is then "other"). */
+  relevant?: boolean;
+  confidence?: number | null;
+  problem?: string | null;
+  excerpt?: string | null;
+  post_kind?: PostKind | null;
+  resolution?: Resolution | null;
+  flags?: string[];
+  classification_version?: number;
 }
 
 export interface ThemeCount {

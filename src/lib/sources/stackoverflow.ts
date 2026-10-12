@@ -1,5 +1,5 @@
 import type { FetchLike, FetchResult, FetchWindow, FetchedPost, Topic } from "../types";
-import { matchesKeywords } from "../matching";
+import { matchAll } from "../matching";
 import { stripHtml } from "../text";
 import { getJson, settleRequests, toResult, type RetryStats } from "./http";
 
@@ -58,6 +58,6 @@ export function makeSoFetcher(fetchImpl: FetchLike = fetch, apiKey?: string, sle
       }),
     );
     const settled = await settleRequests(tasks);
-    return toResult(settled, (p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords), truncated, stats);
+    return toResult(settled, (p) => matchAll(`${p.title} ${p.body}`, topic.keywords, true).length > 0, truncated, stats);
   };
 }

@@ -1,5 +1,5 @@
 import type { FetchLike, FetchResult, FetchWindow, FetchedPost, Topic } from "../types";
-import { matchesKeywords } from "../matching";
+import { matchAll } from "../matching";
 import { stripHtml, truncate } from "../text";
 import { HttpError, parseRetryAfter, settleRequests, toResult } from "./http";
 
@@ -217,7 +217,7 @@ export function makeRedditFetcher(
     });
 
     const settled = await settleRequests([task]);
-    const result = toResult(settled, (p) => matchesKeywords(`${p.title} ${p.body}`, topic.keywords), truncated);
+    const result = toResult(settled, (p) => matchAll(`${p.title} ${p.body}`, topic.keywords, true).length > 0, truncated);
     return tally.retries > 0 || tally.waited > 0 ? { ...result, retries: tally.retries, waitedMs: tally.waited } : result;
   };
 }

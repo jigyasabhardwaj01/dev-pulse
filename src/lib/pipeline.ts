@@ -11,6 +11,11 @@ import { decideBriefWrite, isFrozen, type BriefAction, type BriefDraft } from ".
 import { assessComparison, mergeCoverage, summarizeStatuses, type Comparison, type Coverage, type SourceStatus } from "./coverage";
 import { coarseReason, makeDiagnostics, type Diagnostic } from "./diagnostics";
 import { SOURCE_LABEL } from "./coverage";
+import { analyse, BASELINE_WEEKS, type PriorWeek } from "./analysis";
+import { advance, planFetch, type Checkpoint } from "./checkpoints";
+import { buildFridayBrief, type FridayBrief } from "./friday-brief";
+import { classificationPolicy, effectiveTopic, matchPost, snapshotConfig } from "./watchlist";
+import { formatPeriod } from "./view";
 import { sanitizeError } from "./text";
 import type { Trigger } from "./run-plan";
 import type { ThemeTrend } from "./types";
@@ -23,6 +28,8 @@ export interface EmailArgs {
   points: ThemeTrend[];
   comparison: Comparison;
   coverage: Coverage;
+  /** The structured Friday brief, built from the SAVED version's sealed analysis (never regenerated at send time). Null for reports saved before it existed. */
+  brief?: FridayBrief | null;
 }
 
 /** "sent" may carry the provider's message id for the delivery record. */
@@ -142,6 +149,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
   const diag = makeDiagnostics(() => Date.now(), warnings);
   const obs = makeObserver(store, diag);
 
+  let configSnapshotForFailure: ReturnType<typeof snapshotConfig> | undefined;
   const runId = await obs.start({ week_start: period.weekStart, period_start: period.start, period_end: period.end, trigger });
   let fetchRows: SourceFetchRow[] = [];
   let rowsRecorded = false;
@@ -153,8 +161,22 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
 
   try {
     // 2. topics, in a fixed order so overlapping matches are always assigned the same way
-    const topics = orderTopics(await store.getActiveTopics());
+    const watch = await store.getWatchConfig();
+    const sensitivity = watch.sensitivity;
+    const policy = classificationPolicy(sensitivity);
+    // `keywords` of each topic is now the ACTIVE watchlist include terms, so every adapter queries what the owner configured.
+    const topics = orderTopics(await store.getActiveTopics()).map((t) => effectiveTopic(t, watch.terms));
     const topicNames = Object.fromEntries(topics.map((t) => [t.id, t.name]));
+    const configSnapshot = snapshotConfig(topics, sensitivity, deps.now ?? new Date());
+    configSnapshotForFailure = configSnapshot;
+
+    // checkpoints: what has already been collected COMPLETELY and stored (unreadable checkpoints just mean "fetch everything")
+    const cps = new Map<string, Checkpoint>();
+    try {
+      for (const c of await store.getCheckpoints()) cps.set(`${c.source}|${c.topic_id}`, c);
+    } catch (e) {
+      diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "collect", message: "Collection checkpoints could not be read, so every window is fetched in full." }, `checkpoints unreadable: ${errMsg(e)}`);
+    }
 
     // 3. fetch every (topic, source) independently; one failed source never blocks the others
     const sources = Object.keys(fetchers) as Source[];
@@ -162,19 +184,26 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     const outcomes = await Promise.all(
       jobs.map(async ({ t, src }) => {
         const started = clock();
+        const plan = planFetch(cps.get(`${src}|${t.id}`), period);
+        if (plan.action === "skip") {
+          const r: FetchResult = { posts: [], requests: 0, failed: 0, errors: [], truncated: false };
+          return { t, src, r, status: "ok" as SourceStatus, error: null, ms: 0, skipped: true, window: null as { start: Date; end: Date } | null };
+        }
+        const window = plan.window;
         try {
-          const r = normalize(await fetchers[src]!(t, period));
+          const r = normalize(await fetchers[src]!(t, { ...period, start: window.start, end: window.end }));
           const status: SourceStatus = r.requests > 0 && r.failed >= r.requests ? "error" : r.failed > 0 ? "partial" : "ok";
-          return { t, src, r, status, error: r.errors.join("; ") || null, ms: clock() - started };
+          return { t, src, r, status, error: r.errors.join("; ") || null, ms: clock() - started, skipped: false, window: window as { start: Date; end: Date } | null };
         } catch (e) {
           const r: FetchResult = { posts: [], requests: 1, failed: 1, errors: [errMsg(e)], truncated: false };
-          return { t, src, r, status: "error" as SourceStatus, error: errMsg(e), ms: clock() - started };
+          return { t, src, r, status: "error" as SourceStatus, error: errMsg(e), ms: clock() - started, skipped: false, window: window as { start: Date; end: Date } | null };
         }
       }),
     );
 
     // 4. keep posts inside the period that match the topic's keywords (topic-major order => deterministic)
     const fetchedPosts: FetchedPost[] = [];
+    const filtered = { excluded: 0, belowSensitivity: 0 };
     fetchRows = outcomes.map(({ t, src, r, status, error, ms }) => {
       if (status === "error" || status === "partial") {
         const why = coarseReason(error);
@@ -192,8 +221,14 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       for (const p of r.posts) {
         const at = new Date(p.posted_at).getTime();
         if (at < period.start.getTime() || at >= period.end.getTime()) continue;
-        if (!matchesKeywords(`${p.title} ${p.body}`, t.keywords)) continue;
-        fetchedPosts.push(p);
+        // the watchlist decides: active terms, exclusions and the sensitivity mode (deterministic; see watchlist.matchPost)
+        const m = matchPost(p, t, sensitivity);
+        if (!m.accepted) {
+          if (m.reason === "excluded") filtered.excluded++;
+          else if (m.reason === "below_sensitivity") filtered.belowSensitivity++;
+          continue;
+        }
+        fetchedPosts.push({ ...p, matched_terms: m.terms, flags: m.flags });
         accepted += 1;
       }
       return {
@@ -218,6 +253,14 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       }
     }
 
+    for (const src of sources) {
+      const skipped = outcomes.filter((o) => o.src === src && o.skipped).length;
+      if (skipped) diag.add({ code: "SOURCE_SKIPPED", severity: "info", stage: "collect", source: src, message: `${srcName(src)} was already collected completely for this period (checkpoint), so it was not fetched again for ${skipped} of ${outcomes.filter((o) => o.src === src).length} topics.`, detail: { skipped } }, null);
+    }
+    if (filtered.excluded || filtered.belowSensitivity) {
+      diag.add({ code: "WATCH_FILTERED", severity: "info", stage: "collect", message: `The watchlist removed ${filtered.excluded} ${filtered.excluded === 1 ? "post" : "posts"} by exclusion and ${filtered.belowSensitivity} below the ${sensitivity} evidence threshold.`, detail: { excluded: filtered.excluded, belowSensitivity: filtered.belowSensitivity } }, null);
+    }
+
     // 5-6. dedupe against stored (source, source_id), then insert
     const existing = await store.getExistingKeys(fetchedPosts);
     const fresh = dedupePosts(fetchedPosts, existing);
@@ -226,6 +269,16 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       row.inserted = fresh.filter((p) => p.topic_id === row.topic_id && p.source === row.source).length;
     }
     await flushRows();
+
+    // Checkpoints advance ONLY now, after the data they cover was stored. A failure, a partial fetch or a page cap leaves them
+    // where they were, so the next run starts from the same place and nothing is skipped.
+    try {
+      const now = deps.now ?? new Date(); // the run's LOGICAL time (a backfill is "as of" its date), not the wall clock
+      const moved = outcomes.filter((o) => !o.skipped && o.window).map((o) => advance(cps.get(`${o.src}|${o.t.id}`), o.src, o.t.id, o.window!, { status: o.status, truncated: o.r.truncated }, now));
+      await store.saveCheckpoints(moved);
+    } catch (e) {
+      diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "collect", message: "Collection checkpoints could not be saved; the next run fetches these windows again (nothing is skipped)." }, `checkpoints not saved: ${errMsg(e)}`);
+    }
 
     // 7. classify everything still unclassified: this period first, then earlier periods inside the lookback.
     //    A post stranded by an earlier failure is therefore retried by every later run, under its own period and
@@ -258,7 +311,11 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
               },
               canStart: () => clock() < classifyCutoff,
               deadline: classifyCutoff + CLASSIFY_GRACE_MS,
+              policy,
             });
+            if (out.failures.length) {
+              try { await store.saveClassificationFailures(out.failures); } catch (e) { warnings.push(`classification failure reasons not saved: ${errMsg(e)}`); }
+            }
             warnings.push(...out.warnings);
             if (out.warnings.length) diag.add({ code: "CLASSIFY_WARNING", severity: "warning", stage: "classify", message: `Classification reported ${out.warnings.length} ${out.warnings.length === 1 ? "problem" : "problems"} for "${topic.name}" (details in the server logs).`, detail: { count: out.warnings.length } }, null);
           } catch (e) {
@@ -337,7 +394,11 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
         trends, { pending, warnings }, callModel, comparison.state, t0 + budget - NARRATIVE_MARGIN_MS,
       );
       if (usedFallback) diag.add({ code: "SUMMARY_FALLBACK", severity: "warning", stage: "summary", message: "The AI summary was unavailable, so the summary was written from a template. The numbers are unaffected." }, null);
-      const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison }, pendingCount: pending, usedFallback };
+      // the sealed analysis: aggregation, ranking, baseline and limitations, built from stored evidence and earlier weeks
+      let prior: PriorWeek[] = [];
+      try { prior = await store.getPriorWeeks(period.weekStart, BASELINE_WEEKS); } catch (e) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "summary", message: "Earlier weeks could not be read, so no baseline is shown in this report." }, `prior weeks unreadable: ${errMsg(e)}`); }
+      const analysis = analyse({ weekStart: period.weekStart, posts: await store.getEvidencePosts(period.start, period.end), trends, topicNames, coverage, comparison: comparison.state, prior, pendingPosts: pending });
+      const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison }, pendingCount: pending, usedFallback, configSnapshot, analysis };
       const decision = decideBriefWrite(savedBefore, draft);
       action = decision.action;
       reason = decision.reason;
@@ -363,6 +424,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
         points: saved.points,
         comparison: saved.coverage.comparison,
         coverage: saved.coverage.sources,
+        brief: saved.analysis ? buildFridayBrief({ weekStart: period.weekStart, periodLabel: formatPeriod(period.weekStart), analysis: saved.analysis, narrative: saved.narrative, usedFallback: saved.usedFallback }) : null,
       }, diag, deps.sleep);
     }
 
@@ -370,7 +432,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     const status: RunStatus = problems ? "partial" : "succeeded";
     await obs.finish(runId, {
       status, fetched_total: fetchedPosts.length, new_posts: fresh.length, classified_ok: classified,
-      classification_failed: pending + backlogRemaining, used_fallback: saved.usedFallback, email_status: email, warnings, diagnostics: diag.items,
+      classification_failed: pending + backlogRemaining, used_fallback: saved.usedFallback, email_status: email, warnings, diagnostics: diag.items, config_snapshot: configSnapshot,
     });
 
     return {
@@ -385,7 +447,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
     // Record the failure, then surface the ORIGINAL error. Recording problems are only noted.
     await flushRows();
     diag.add({ code: "RUN_FAILED", severity: "error", stage: "run", message: "The run failed before it could complete. See the server logs for the cause." }, null);
-    await obs.finish(runId, { status: "failed", warnings, diagnostics: diag.items, error: errMsg(e) });
+    await obs.finish(runId, { status: "failed", warnings, diagnostics: diag.items, ...(configSnapshotForFailure ? { config_snapshot: configSnapshotForFailure } : {}), error: errMsg(e) });
     throw e;
   }
 }

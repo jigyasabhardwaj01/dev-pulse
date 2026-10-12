@@ -1,5 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Classification, StoredPost, ThemeCount, ThemeTrend, Topic } from "./types";
+import type { EvidencePost, PriorWeek } from "./analysis";
+import type { Checkpoint } from "./checkpoints";
+import { shiftWeek } from "./analysis";
+import type { ConfigSnapshot, WatchConfig, WatchTerm } from "./watchlist";
 import type { Comparison, Coverage } from "./coverage";
 import type { BriefDraft, BriefRecord } from "./brief-policy";
 import type { Diagnostic } from "./diagnostics";
@@ -10,6 +14,7 @@ export type EmailOutcome = "sent" | "skipped" | "failed" | "already_sent" | "in_
 export type EmailClaim = "claimed" | "already_sent" | "in_progress" | "unconfirmed" | "no_brief";
 
 export interface RunStart { week_start: string; period_start: Date; period_end: Date; trigger: "scheduled" | "backfill" }
+export interface ClassificationFailure { id: string; code: string }
 export interface RunFinish {
   status: RunStatus;
   fetched_total?: number;
@@ -21,6 +26,8 @@ export interface RunFinish {
   warnings?: string[];
   /** Structured diagnostics. When present they are what is stored (in the same jsonb column); plain warnings remain the fallback. */
   diagnostics?: Diagnostic[];
+  /** The effective watchlist and sensitivity the run used, for reproducibility. */
+  config_snapshot?: ConfigSnapshot;
   error?: string | null;
 }
 export interface SourceFetchRow {
@@ -54,6 +61,17 @@ export interface Store {
   getExistingKeys(posts: { source: string; source_id: string }[]): Promise<Set<string>>;
   insertPosts(posts: Omit<StoredPost, "id" | "theme" | "sentiment" | "unresolved">[]): Promise<void>;
   getUnclassifiedPosts(from: Date, to: Date): Promise<StoredPost[]>;
+  /** The watchlist (terms, exclusions, sensitivity). Empty terms mean "use each topic's legacy keywords". */
+  getWatchConfig(): Promise<WatchConfig>;
+  /** Classified, relevant posts in a period with the evidence fields the weekly analysis needs. */
+  getEvidencePosts(from: Date, to: Date): Promise<EvidencePost[]>;
+  /** Records WHY posts could not be classified (a short stable code each). Best-effort. */
+  saveClassificationFailures(items: ClassificationFailure[]): Promise<void>;
+  /** Per (source, topic) collection checkpoints: last attempt, last success and the committed range. */
+  getCheckpoints(): Promise<Checkpoint[]>;
+  saveCheckpoints(rows: Checkpoint[]): Promise<void>;
+  /** Up to `count` immediately preceding weekly reports (counts and coverage), for the baseline and persistence. Legacy weeks are not included. */
+  getPriorWeeks(weekStart: string, count: number): Promise<PriorWeek[]>;
   saveClassifications(items: Classification[]): Promise<void>;
   getClassifiedPosts(from: Date, to: Date): Promise<Pick<StoredPost, "topic_id" | "theme" | "unresolved">[]>;
   getSourceCounts(from: Date, to: Date): Promise<Record<string, number>>;
@@ -164,8 +182,65 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
         await Promise.all(part.map(async (c) =>
           ok(await db.from("raw_posts").update({
             theme: c.theme, sentiment: c.sentiment, unresolved: c.unresolved, classified_at: now,
+            ...(c.relevant !== undefined ? { relevant: c.relevant } : {}),
+            ...(c.confidence !== undefined ? { confidence: c.confidence } : {}),
+            ...(c.problem !== undefined ? { problem: c.problem } : {}),
+            ...(c.excerpt !== undefined ? { excerpt: c.excerpt } : {}),
+            ...(c.post_kind !== undefined ? { post_kind: c.post_kind } : {}),
+            ...(c.resolution !== undefined ? { resolution: c.resolution } : {}),
+            ...(c.flags !== undefined ? { flags: c.flags } : {}),
+            ...(c.classification_version !== undefined ? { classification_version: c.classification_version } : {}),
+            classification_error: null,
           }).eq("id", c.id).is("theme", null), "save classification"))); // never overwrite a stored result
       }
+    },
+
+    async getWatchConfig() {
+      // Both tables are new; if they do not exist yet the pipeline simply uses each topic's legacy keywords (balanced).
+      const s = await db.from("watchlist_settings").select("sensitivity").eq("id", 1).maybeSingle();
+      const t = await db.from("watch_terms").select("id, topic_id, term, kind, status, applies_to").order("topic_id").order("kind").order("term");
+      if (t.error || s.error) return { sensitivity: "balanced", terms: [] };
+      const sensitivity = (s.data as { sensitivity?: string } | null)?.sensitivity;
+      return { sensitivity: sensitivity === "strict" || sensitivity === "early" ? sensitivity : "balanced", terms: (t.data ?? []) as WatchTerm[] };
+    },
+
+    async getEvidencePosts(from, to) {
+      const rows = await paged<Record<string, unknown>>(
+        (a, b) => db.from("raw_posts")
+          .select("id, source, topic_id, theme, title, url, author, posted_at, confidence, excerpt, resolution, unresolved, flags")
+          .not("theme", "is", null).or("relevant.is.null,relevant.eq.true")
+          .gte("posted_at", from.toISOString()).lt("posted_at", to.toISOString()).order("posted_at").order("id").range(a, b),
+        "evidence posts",
+      );
+      return rows.map((r) => ({ ...r, flags: (r.flags as string[] | null) ?? [] })) as unknown as EvidencePost[];
+    },
+
+    async saveClassificationFailures(items) {
+      for (const part of chunk(items, 50)) {
+        await Promise.all(part.map(async (f) =>
+          ok(await db.from("raw_posts").update({ classification_error: f.code.slice(0, 40) }).eq("id", f.id).is("theme", null), "save classification failure")));
+      }
+    },
+
+    async getCheckpoints() {
+      const res = await db.from("source_checkpoints").select("source, topic_id, last_attempt_at, last_success_at, covered_from, committed_through, last_status");
+      return res.error ? [] : ((res.data ?? []) as Checkpoint[]);
+    },
+
+    async saveCheckpoints(rows) {
+      if (!rows.length) return;
+      ok(await db.from("source_checkpoints").upsert(rows, { onConflict: "source,topic_id" }), "save checkpoints");
+    },
+
+    async getPriorWeeks(weekStart, count) {
+      const keys = Array.from({ length: count }, (_, i) => shiftWeek(weekStart, -(i + 1)));
+      const periods = ok(await db.from("report_periods").select("week_start, coverage").in("week_start", keys), "prior report periods") as unknown as { week_start: string; coverage: { sources?: Coverage } | null }[];
+      const aggs = ok(await db.from("weekly_aggregates").select("week_start, topic_id, theme, mention_count, unresolved_count").in("week_start", keys), "prior aggregates") as unknown as { week_start: string; topic_id: string; theme: string; mention_count: number; unresolved_count: number }[];
+      return keys.flatMap((k): PriorWeek[] => {
+        const p = periods.find((x) => x.week_start === k);
+        if (!p) return []; // not recorded under the IST period convention (or missing): not usable
+        return [{ weekStart: k, coverage: p.coverage?.sources ?? null, counts: aggs.filter((a) => a.week_start === k).map((a) => ({ topic_id: a.topic_id, theme: a.theme, count: a.mention_count, unresolved: a.unresolved_count })) }];
+      });
     },
 
     async getClassifiedPosts(from, to) {
@@ -223,12 +298,13 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
     async getBrief(weekStart) {
       const row = ok(
         await db.from("briefs")
-          .select("week_start, narrative, top_pain_points, coverage, version, pending_count, used_fallback, email_status, emailed_version, created_at")
+          .select("week_start, narrative, top_pain_points, coverage, version, pending_count, used_fallback, email_status, emailed_version, created_at, config_snapshot, analysis")
           .eq("week_start", weekStart).maybeSingle(),
         "get brief",
       ) as unknown as {
         week_start: string; narrative: string; top_pain_points: ThemeTrend[]; coverage: BriefDraft["coverage"] | null; version: number;
         pending_count: number; used_fallback: boolean; email_status: BriefRecord["emailStatus"]; emailed_version: number | null; created_at: string;
+        config_snapshot: BriefDraft["configSnapshot"]; analysis: BriefDraft["analysis"];
       } | null;
       if (!row) return null;
       return {
@@ -242,6 +318,8 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
         emailStatus: row.email_status,
         emailedVersion: row.emailed_version,
         createdAt: row.created_at,
+        configSnapshot: row.config_snapshot ?? null,
+        analysis: row.analysis ?? null,
       };
     },
 
@@ -256,6 +334,8 @@ export function makeSupabaseStore(db: Db = supabaseFromEnv()): Store {
         coverage: draft.coverage,
         pending_count: draft.pendingCount,
         used_fallback: draft.usedFallback,
+        config_snapshot: draft.configSnapshot ?? null,
+        analysis: draft.analysis ?? null,
       };
       if (expectVersion === null) {
         const rows = ok(

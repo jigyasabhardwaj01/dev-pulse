@@ -103,7 +103,7 @@ describe("store: writes are shaped to be idempotent and safe", () => {
     for (const { calls } of log) {
       expect(names(calls)).toContain("update");
       expect(has(calls, "is", "theme", null)).toBe(true);
-      expect(Object.keys(calls.find((c) => c.m === "update")!.args[0] as object).sort()).toEqual(["classified_at", "sentiment", "theme", "unresolved"]);
+      expect(Object.keys(calls.find((c) => c.m === "update")!.args[0] as object).sort()).toEqual(["classification_error", "classified_at", "sentiment", "theme", "unresolved"]); // v1 shape: no v2 fields unless given
     }
   });
   it("aggregates upsert on (week_start, topic_id, theme); an empty set writes nothing", async () => {

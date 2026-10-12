@@ -1,6 +1,9 @@
 import type { BriefDraft, BriefRecord } from "@/lib/brief-policy";
 import { EMAIL_KEY_SAFE_MS, EMAIL_LEASE_MS, type EmailClaim, type ReportPeriodRow, type RunFinish, type RunStart, type SourceFetchRow, type Store } from "@/lib/store";
 import type { Classification, FetchedPost, StoredPost, ThemeCount, ThemeTrend, Topic } from "@/lib/types";
+import { shiftWeek, type EvidencePost, type PriorWeek } from "@/lib/analysis";
+import type { Checkpoint } from "@/lib/checkpoints";
+import type { WatchConfig } from "@/lib/watchlist";
 
 export const TOPIC: Topic = {
   id: "t1", name: "Code review", keywords: ["code review", "false positive"],
@@ -30,6 +33,9 @@ export class MemoryStore implements Store {
   sourceFetches: (SourceFetchRow & { run_id: string })[] = [];
   fail: Partial<Record<keyof Store, Error>> = {};
   saves: number[] = []; // size of each saveClassifications call, in order
+  watch: WatchConfig = { sensitivity: "balanced", terms: [] };
+  checkpoints = new Map<string, Checkpoint>();
+  classificationFailures = new Map<string, string>();
   constructor(public topics: Topic[] = [TOPIC]) {}
 
   /** Transient faults: the next N calls of a method throw, then it works again. */
@@ -41,6 +47,24 @@ export class MemoryStore implements Store {
   }
 
   async getActiveTopics() { this.boom("getActiveTopics"); return this.topics.filter((t) => t.active); }
+  async getWatchConfig(): Promise<WatchConfig> { this.boom("getWatchConfig"); return JSON.parse(JSON.stringify(this.watch)); }
+  async getEvidencePosts(from: Date, to: Date): Promise<EvidencePost[]> {
+    this.boom("getEvidencePosts");
+    return this.posts.filter((p) => p.theme !== null && p.relevant !== false && this.inRange(p, from, to)).map((p) => ({
+      id: p.id, source: p.source, topic_id: p.topic_id, theme: p.theme as string, title: p.title, url: p.url, author: p.author, posted_at: p.posted_at,
+      confidence: p.confidence ?? null, excerpt: p.excerpt ?? null, resolution: p.resolution ?? null, unresolved: p.unresolved, flags: (p as { flags?: string[] }).flags ?? [],
+    }));
+  }
+  async saveClassificationFailures(items: { id: string; code: string }[]) { this.boom("saveClassificationFailures"); for (const f of items) if (this.posts.find((p) => p.id === f.id)?.theme === null) this.classificationFailures.set(f.id, f.code); }
+  async getCheckpoints(): Promise<Checkpoint[]> { this.boom("getCheckpoints"); return [...this.checkpoints.values()].map((c) => ({ ...c })); }
+  async saveCheckpoints(rows: Checkpoint[]) { this.boom("saveCheckpoints"); for (const r of rows) this.checkpoints.set(`${r.source}|${r.topic_id}`, { ...r }); }
+  async getPriorWeeks(week: string, count: number): Promise<PriorWeek[]> {
+    this.boom("getPriorWeeks");
+    return Array.from({ length: count }, (_, i) => shiftWeek(week, -(i + 1))).flatMap((k): PriorWeek[] => {
+      const rp = this.reports.get(k);
+      return rp ? [{ weekStart: k, coverage: rp.coverage.sources ?? null, counts: (this.aggregates.get(k) ?? []).map((c) => ({ ...c })) }] : [];
+    });
+  }
   async getExistingKeys() { return new Set(this.posts.map((p) => `${p.source}:${p.source_id}`)); }
   async insertPosts(posts: FetchedPost[]) {
     this.boom("insertPosts");
