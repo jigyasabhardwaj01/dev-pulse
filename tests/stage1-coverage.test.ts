@@ -123,3 +123,24 @@ describe("AI time budget", () => {
     expect(called).toBe(0);
   });
 });
+
+describe("a source switched off on purpose (not collected)", () => {
+  const prev = { hn: { status: "ok", posts: 90 }, github: { status: "ok", posts: 9 }, reddit: { status: "partial", posts: 1 } } as never;
+  const cur = { hn: { status: "ok", posts: 80 }, github: { status: "ok", posts: 10 } } as never;
+  it("a small previous share does not block the comparison, but is stated as a caveat", async () => {
+    const { assessComparison } = await import("@/lib/coverage");
+    const c = assessComparison(cur, prev, { reddit: "no credentials" });
+    expect(c.state).toBe("comparable");
+    expect(c.caveats?.join(" ")).toMatch(/Reddit was not collected this period; it supplied 1%/);
+  });
+  it("without the declaration the same absence still blocks (unchanged behaviour)", async () => {
+    const { assessComparison } = await import("@/lib/coverage");
+    expect(assessComparison(cur, prev).state).toBe("incomparable");
+  });
+  it("a material previous share blocks trends even when the source was switched off", async () => {
+    const { assessComparison } = await import("@/lib/coverage");
+    const big = { hn: { status: "ok", posts: 50 }, reddit: { status: "ok", posts: 50 } } as never;
+    const c = assessComparison({ hn: { status: "ok", posts: 50 } } as never, big, { reddit: "no credentials" });
+    expect(c.state).toBe("incomparable");
+  });
+});

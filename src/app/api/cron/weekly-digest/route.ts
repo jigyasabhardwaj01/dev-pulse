@@ -7,6 +7,7 @@ import { makeSoFetcher } from "@/lib/sources/stackoverflow";
 import { makeRedditFetcher } from "@/lib/sources/reddit";
 import { makeGithubFetcher } from "@/lib/sources/github";
 import { openRouterFromEnv } from "@/lib/openrouter";
+import { redditAccessFrom } from "@/lib/sources/reddit-access";
 import { sendBriefEmail } from "@/lib/email";
 import { ACTIVE_RUN_WINDOW_MS, planRun } from "@/lib/run-plan";
 import { periodFor } from "@/lib/week";
@@ -69,17 +70,21 @@ export async function GET(req: Request) {
   }
 
   const started = Date.now();
+  const redditAccess = redditAccessFrom(process.env);
   try {
     const summary = await runDigest({
       store,
       fetchers: {
         hn: makeHnFetcher(),
         stackoverflow: makeSoFetcher(fetch, process.env.STACKEXCHANGE_KEY),
-        // Optional app-only OAuth: without these two variables Reddit is read through its public (rate-limited) feed.
-        reddit: makeRedditFetcher(fetch, undefined, { clientId: process.env.REDDIT_CLIENT_ID, clientSecret: process.env.REDDIT_CLIENT_SECRET }),
+        // Reddit is collected only through a supported, reliable method: app-only OAuth (REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET), or the
+        // public feed when REDDIT_PUBLIC_ENABLED=1. From Vercel the public feed was answered with HTTP 429/403 in production, so by
+        // default it is switched off and the report says so, instead of reporting a failed or empty source every week.
+        ...(redditAccess.enabled ? { reddit: makeRedditFetcher(fetch, undefined, { clientId: process.env.REDDIT_CLIENT_ID, clientSecret: process.env.REDDIT_CLIENT_SECRET }) } : {}),
         github: makeGithubFetcher(fetch, process.env.GITHUB_TOKEN),
       },
       callModel,
+      notCollected: redditAccess.enabled ? undefined : { reddit: redditAccess.reason },
       sendEmail: plan.allowEmail ? (args) => sendBriefEmail(args) : undefined,
       trigger: plan.trigger,
       now: plan.now,

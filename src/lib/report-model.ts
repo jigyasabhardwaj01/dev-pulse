@@ -1,5 +1,5 @@
 import type { ThemeTrend } from "./types";
-import type { Comparison, ComparisonState, Coverage, SourceStatus } from "./coverage";
+import type { Comparison, ComparisonState, Coverage, NotCollected, SourceStatus } from "./coverage";
 import { coarseReason, parseDiagnostics, type Diagnostic } from "./diagnostics";
 import { formatLegacyWeek, formatPeriod, summarizeReport, shortWeek, type ReportStats } from "./view";
 
@@ -9,7 +9,7 @@ export interface BriefDbRow {
   narrative: string;
   top_pain_points: ThemeTrend[];
   created_at: string;
-  coverage?: { sources: Coverage; comparison: Comparison } | null;
+  coverage?: { sources: Coverage; comparison: Comparison; notCollected?: NotCollected } | null;
   version?: number | null;
   email_status?: "sending" | "sent" | "failed" | null;
   email_sent_at?: string | null;
@@ -20,7 +20,7 @@ export interface PeriodDbRow {
   week_start: string;
   period_start: string;
   period_end: string;
-  coverage: { sources?: Coverage; comparison?: Comparison } | null;
+  coverage: { sources?: Coverage; comparison?: Comparison; notCollected?: NotCollected } | null;
 }
 
 /** "legacy" = recorded before reporting periods and source coverage existed; its trends cannot be vouched for. */
@@ -34,7 +34,7 @@ export interface ReportView {
   narrative: string;
   /** Pain points as saved; use `displayPoints` for what may be shown. */
   points: ThemeTrend[];
-  coverage: { sources: Coverage; comparison: Comparison } | null;
+  coverage: { sources: Coverage; comparison: Comparison; notCollected?: NotCollected } | null;
   reliability: TrendReliability;
   version: number | null;
   generatedAt: string;

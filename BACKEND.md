@@ -128,13 +128,13 @@ Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side onl
 
 ## 17. Team workflow and security
 
-- **Sign-in**: no passwords. A roster comes from env (owner = `JARVIS_OWNER_EMAIL`, falling back to `DIGEST_TO_EMAIL`; members = `JARVIS_TEAM_EMAILS`). A single-use 15-minute link (HMAC-signed, nonce in `auth_tokens`, consumed by one conditional UPDATE) is emailed via Resend; opening it shows a confirmation button (POST) so mail scanners cannot burn it. The session cookie is HMAC-signed, httpOnly, SameSite=Lax, Secure on https, 7 days, and carries only the email: **the role is re-derived from the roster on every request**. Needs `SESSION_SECRET` (16+ chars); without it sign-in is off and every write returns 401.
+- **Sign-in** (no email is sent): the roster comes from env (owner = `JARVIS_OWNER_EMAIL`, falling back to `DIGEST_TO_EMAIL`; members = `JARVIS_TEAM_EMAILS`). A person signs in at `/signin` with their roster email and the passcode for their role: `OWNER_PASSCODE` (owner) or `TEAM_PASSCODE` (members), both set only in Vercel's protected environment (12+ characters; compared in constant time). Wrong attempts are counted per address (5 per 15 minutes, using `auth_tokens` as the attempt log) and every refusal gives the same message. The session cookie is HMAC-signed, httpOnly, SameSite=Lax, Secure on https, 7 days, and carries only the email: **the role is re-derived from the roster on every request**. Needs `SESSION_SECRET` (16+ chars) and `OWNER_PASSCODE`; without them sign-in is off (503) and every write returns 401. A missing `TEAM_PASSCODE` means only the owner can sign in.
 - **Writes**: every POST/PUT/PATCH/DELETE requires same-origin JSON (Origin check + content-type), a valid session and the role; the actor is always the session email. No public write endpoint exists. Reads of `/review` and `/pack` require sign-in; `/watchlist` is read-only to the public with actor emails hidden.
 - **Review**: shortlist (any member; the pain point must exist in the saved report's sealed analysis; one item per topic and theme), owner opens voting, one vote per person (changeable, withdrawable), owner decision recorded through the `record_review_decision` function (atomic: supersede, insert, state, event). Decisions are never edited or deleted (trigger); the vote tally at decision time is stored beside it but never computes the outcome.
 - **Monday pack**: built by the owner on request from the latest saved report and the current decisions; committed list = prioritised decisions only; AI suggestions are labelled and separate; stale when the decisions digest changes or a newer report exists; no schedule invented.
 - **Failure alerts**: scheduled runs only; run failed, email failed/unconfirmed, or every source down. One per kind and week (`alert_log` unique key), at most 3 per kind per 24 h, codes only, to `DIGEST_TO_EMAIL` from the approved sender. An alert error never fails the run.
 - **Migrations** (additive, applied in order): 006 JARVIS 2.0 tables and columns, 007 checkpoint range, 008 `record_review_decision`. Recovery notes are at the top of each file; nothing existing is altered.
-- **New env var names**: `SESSION_SECRET`, `JARVIS_OWNER_EMAIL` (optional), `JARVIS_TEAM_EMAILS`.
+- **New env var names**: `SESSION_SECRET`, `OWNER_PASSCODE`, `TEAM_PASSCODE`, `JARVIS_OWNER_EMAIL` (optional), `JARVIS_TEAM_EMAILS`.
 
 ## 18. AI inference: OpenRouter, Google models only
 
@@ -144,3 +144,13 @@ Required: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (database, server-side onl
 - Retries: at most 3 attempts for 408/429/5xx/network errors with back-off (Retry-After honoured, capped, and never past the run's deadline). 401/403 (bad key) and 402 (no credit) stop immediately and trip a breaker so the rest of the run makes no further requests; the run then reports `CLASSIFY_ABORTED` and the posts stay unclassified for the next run.
 - Usage (model, provider, latency, tokens, cost when OpenRouter returns it) is available per call through `onResult`.
 - Live check: `LIVE_AI=1 OPENROUTER_API_KEY=... npx vitest run tests/live-openrouter.dev.test.ts`. The key must be a rotated one set in Vercel's protected settings; never commit it.
+
+## 19. Active sources and the Reddit decision (2026-10-12)
+
+Evidence from production runs (`source_fetches`): Hacker News, GitHub Issues and Stack Exchange answered every request (0 failures). Reddit's public feed, requested from Vercel, was answered with HTTP 429 (once 403) in 8 of 9 topic fetches across two runs, taking 18 to 54 s each, while the same feed answered from a developer machine. That points at rate limiting of shared hosting IPs, not at our request construction or parsing. Without API credentials there is no supported way to make it reliable, so:
+
+- **Active by default:** Hacker News, Stack Exchange (Stack Overflow site), GitHub Issues.
+- **Reddit is opt-in:** collected only when `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` (app-only OAuth) are set, or when `REDDIT_PUBLIC_ENABLED=1`. Otherwise the run records `SOURCE_DISABLED`, the report's `coverage.notCollected` names Reddit and the reason, the report page shows a "Not collected" row and a warning note, the sealed analysis and the Friday email carry a limitation line, and Pipeline Health shows Reddit as "Not checked". It is never shown as zero posts or as a failure.
+- **Comparison:** a source switched off on purpose does not block week-over-week trends when it supplied under 10% of the previous period's posts (a caveat is shown); above that, trends are withheld.
+- **Coverage lost:** Reddit supplied about 1.5% of stored posts (6 of 395), so the practical loss is small. Stack Exchange yields little for these topics (0 to 6 posts per topic per week) but works.
+- No other source was added: no further documented, reliable, free source was justified for the current topics.

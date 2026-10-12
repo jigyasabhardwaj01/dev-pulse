@@ -8,7 +8,7 @@ import { classifyTopicPosts, countStoredThemes, countThemes } from "./classify";
 import { buildTrends, rankPainPoints } from "./trend";
 import { generateBrief } from "./brief";
 import { decideBriefWrite, isFrozen, type BriefAction, type BriefDraft } from "./brief-policy";
-import { assessComparison, mergeCoverage, summarizeStatuses, type Comparison, type Coverage, type SourceStatus } from "./coverage";
+import { assessComparison, mergeCoverage, summarizeStatuses, type Comparison, type Coverage, type NotCollected, type SourceStatus } from "./coverage";
 import { coarseReason, makeDiagnostics, type Diagnostic } from "./diagnostics";
 import { SOURCE_LABEL } from "./coverage";
 import { analyse, BASELINE_WEEKS, type PriorWeek } from "./analysis";
@@ -38,6 +38,8 @@ export type SendResult = "sent" | "skipped" | { status: "sent"; messageId?: stri
 export interface Deps {
   store: Store;
   fetchers: Partial<Record<Source, SourceFetcher>>;
+  /** Sources deliberately not collected this run (disabled), with the reason. Disclosed on the report; never counted as zero or as a failure. */
+  notCollected?: NotCollected;
   /** null when the AI provider is not configured: classification is skipped and the brief uses the fallback */
   callModel: ModelCaller | null;
   sendEmail?: (args: EmailArgs) => Promise<SendResult>;
@@ -180,6 +182,9 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
 
     // 3. fetch every (topic, source) independently; one failed source never blocks the others
     const sources = Object.keys(fetchers) as Source[];
+    const notCollected: NotCollected = Object.fromEntries(Object.entries(deps.notCollected ?? {}).filter(([s]) => !(s in fetchers)));
+    const notCollectedEntries = Object.entries(notCollected) as [Source, string][];
+    for (const [s, why] of notCollectedEntries) diag.add({ code: "SOURCE_DISABLED", severity: "info", stage: "collect", source: s, message: `${SOURCE_LABEL[s] ?? s} was not collected: ${why}` }, null);
     const jobs = topics.flatMap((t) => sources.map((src) => ({ t, src })));
     const outcomes = await Promise.all(
       jobs.map(async ({ t, src }) => {
@@ -367,7 +372,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       };
     }
     const coverage = mergeCoverage(sameKey ? (thisReport.coverage?.sources ?? null) : null, runCoverage);
-    const comparison = assessComparison(coverage, prevValid ? (prevValid.coverage?.sources ?? {}) : null);
+    const comparison = assessComparison(coverage, prevValid ? (prevValid.coverage?.sources ?? {}) : null, notCollected);
 
     // Trend maths is unchanged for a fair comparison. Otherwise counts are kept but no trend is asserted.
     let trends = buildTrends(current, previousRows, topicNames);
@@ -379,7 +384,7 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       week_start: period.weekStart,
       period_start: period.start.toISOString(),
       period_end: period.end.toISOString(),
-      coverage: { sources: coverage, comparison },
+      coverage: { sources: coverage, comparison, ...(notCollectedEntries.length ? { notCollected } : {}) },
     });
 
     // 11. the saved report: one version that both the dashboard and the email use.
@@ -398,7 +403,8 @@ export async function runDigest(deps: Deps): Promise<RunSummary> {
       let prior: PriorWeek[] = [];
       try { prior = await store.getPriorWeeks(period.weekStart, BASELINE_WEEKS); } catch (e) { diag.add({ code: "MONITORING_FAILED", severity: "warning", stage: "summary", message: "Earlier weeks could not be read, so no baseline is shown in this report." }, `prior weeks unreadable: ${errMsg(e)}`); }
       const analysis = analyse({ weekStart: period.weekStart, posts: await store.getEvidencePosts(period.start, period.end), trends, topicNames, coverage, comparison: comparison.state, prior, pendingPosts: pending });
-      const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison }, pendingCount: pending, usedFallback, configSnapshot, analysis };
+      for (const [s, why] of notCollectedEntries) analysis.limitations.push(`${SOURCE_LABEL[s] ?? s} was not collected this week (${why}). Its discussions are missing from every count here; this is not zero mentions, and the other sources may not represent the whole developer conversation.`);
+      const draft: BriefDraft = { narrative, points, coverage: { sources: coverage, comparison, ...(notCollectedEntries.length ? { notCollected } : {}) }, pendingCount: pending, usedFallback, configSnapshot, analysis };
       const decision = decideBriefWrite(savedBefore, draft);
       action = decision.action;
       reason = decision.reason;

@@ -4,7 +4,7 @@ import type { EvidencePost, PriorWeek } from "./analysis";
 import type { Checkpoint } from "./checkpoints";
 import { shiftWeek } from "./analysis";
 import type { ConfigSnapshot, WatchConfig, WatchTerm } from "./watchlist";
-import type { Comparison, Coverage } from "./coverage";
+import type { Comparison, Coverage, NotCollected } from "./coverage";
 import type { BriefDraft, BriefRecord } from "./brief-policy";
 import type { Diagnostic } from "./diagnostics";
 import { sanitizeError } from "./text";
@@ -47,7 +47,7 @@ export interface ReportPeriodRow {
   week_start: string;
   period_start: string; // ISO
   period_end: string; // ISO
-  coverage: { sources: Coverage; comparison?: Comparison };
+  coverage: { sources: Coverage; comparison?: Comparison; notCollected?: NotCollected };
 }
 
 /** Deterministic order for everything that depends on topic order (assignment of overlapping matches). */

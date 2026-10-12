@@ -58,7 +58,7 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
   const points = displayPoints(report);
   const kpis = computeKpis(points, report.stats);
   const cov = report.coverage;
-  const reading = readCoverage(cov?.sources, cov?.comparison, report.reliability);
+  const reading = readCoverage(cov?.sources, cov?.comparison, report.reliability, cov?.notCollected);
   const prevKey = previousWeekKey(report.weekStart);
   const previousLabel = prevKey ? shortRange(prevKey) : null;
   const header = <PeriodHeader report={report} mode={mode} />;
@@ -123,7 +123,7 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
         <PainPointTable canShortlist={canShortlist} points={points} weekStart={report.weekStart} />
         <section className="section" aria-labelledby="lim-heading">
           <h2 id="lim-heading">Source coverage and limitations</h2>
-          <div className="grid-eq"><SourceCoverage sources={cov?.sources} /><DataNotes sources={cov?.sources} comparison={cov?.comparison} reliability={report.reliability} /></div>
+          <div className="grid-eq"><SourceCoverage sources={cov?.sources} notCollected={cov?.notCollected} /><DataNotes sources={cov?.sources} comparison={cov?.comparison} reliability={report.reliability} notCollected={cov?.notCollected} /></div>
         </section>
       </>
     );
@@ -163,7 +163,7 @@ export default async function ReportContent({ week, mode = "overview" }: { week?
       </section>
       <section className="section" aria-labelledby="cov-heading">
         <h2 id="cov-heading" className="sr-only">Source coverage and data notes</h2>
-        <div className="grid-eq"><SourceCoverage sources={cov?.sources} /><DataNotes sources={cov?.sources} comparison={cov?.comparison} reliability={report.reliability} /></div>
+        <div className="grid-eq"><SourceCoverage sources={cov?.sources} notCollected={cov?.notCollected} /><DataNotes sources={cov?.sources} comparison={cov?.comparison} reliability={report.reliability} notCollected={cov?.notCollected} /></div>
       </section>
     </>
   );

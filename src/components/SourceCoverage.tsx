@@ -1,14 +1,15 @@
 import { readCoverage, sourceRows, type Reliability } from "@/lib/insights";
-import type { Comparison, Coverage } from "@/lib/coverage";
+import { SOURCE_LABEL, type Comparison, type Coverage, type NotCollected } from "@/lib/coverage";
 import { Icon } from "./Icons";
 import { pct } from "@/lib/view";
 
 const PILL = { ok: { cls: "ok", text: "Healthy" }, partial: { cls: "warn", text: "Partly collected" }, error: { cls: "bad", text: "Failed" } } as const;
 
 /** Where the posts came from, with failure, partial collection, zero-but-healthy and capped kept distinct. */
-export default function SourceCoverage({ sources }: { sources: Coverage | null | undefined }) {
+export default function SourceCoverage({ sources, notCollected }: { sources: Coverage | null | undefined; notCollected?: NotCollected | null }) {
   const rows = sourceRows(sources);
-  if (!rows.length) return null;
+  const off = Object.entries(notCollected ?? {});
+  if (!rows.length && !off.length) return null;
   return (
     <section className="card card-pad section" aria-labelledby="src-heading">
       <h2 id="src-heading">Source coverage</h2>
@@ -31,6 +32,12 @@ export default function SourceCoverage({ sources }: { sources: Coverage | null |
             </li>
           );
         })}
+        {off.map(([s, why]) => (
+          <li key={`off-${s}`} className="src partial">
+            <div className="src-top"><span>{SOURCE_LABEL[s] ?? s}</span><span className="pill neutral">Not collected</span></div>
+            <p className="src-sub">Switched off for this period: {why}. Missing from the counts; this is not zero posts.</p>
+          </li>
+        ))}
       </ul>
       <p className="faint small">Collected posts include those that did not match a tracked theme, so they outnumber the mentions counted above.</p>
     </section>
@@ -38,8 +45,8 @@ export default function SourceCoverage({ sources }: { sources: Coverage | null |
 }
 
 /** Detailed, collapsible notes. The always-visible one-liner lives in CoverageAlert. */
-export function DataNotes({ sources, comparison, reliability }: { sources: Coverage | null | undefined; comparison: Comparison | null | undefined; reliability: Reliability }) {
-  const reading = readCoverage(sources, comparison, reliability);
+export function DataNotes({ sources, comparison, reliability, notCollected }: { sources: Coverage | null | undefined; comparison: Comparison | null | undefined; reliability: Reliability; notCollected?: NotCollected | null }) {
+  const reading = readCoverage(sources, comparison, reliability, notCollected);
   const scope = { this: "This period", previous: "Previous period", both: "This and previous period" } as const;
   return (
     <details className="card notes" id="data-notes" open={reading.level === "warn" ? true : undefined}>
