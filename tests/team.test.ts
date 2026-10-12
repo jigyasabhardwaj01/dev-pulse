@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SESSION_COOKIE, cookieValue, passcodeMatches, roleOf, rosterFromEnv, sameOrigin, sameOriginJson, sessionFrom, sessionToken, sign, verify } from "@/lib/auth";
-import { REFUSED, login } from "@/lib/login";
+import { VISITOR_COOKIE, cookieValue, newVisitorId, sameOriginJson, visitorCookie, visitorFrom } from "@/lib/auth";
 import { castVote, decide, decisionsDigest, setItemState, shortlist, tally, viewItem, withdrawVote, type PainPointLookup } from "@/lib/team";
 import { addTerm, editTerm, removeTerm, setSensitivity } from "@/lib/watch-service";
 import { buildPack, packFreshness } from "@/lib/pack";
@@ -17,110 +16,33 @@ const a: Session = { email: "a@team.test", role: "member" };
 const b: Session = { email: "b@team.test", role: "member" };
 const lookup: PainPointLookup = async (_w, _t, theme) => (theme === "Slow reviews" ? { links: [], discussions: 4 } : null);
 
-describe("roster and roles", () => {
-  it("owner defaults to the approved recipient; members come from the list; duplicates, the owner and junk are dropped", () => {
-    expect(rosterFromEnv(ENV)).toEqual({ owner: "owner@team.test", members: ["a@team.test", "b@team.test"] });
-    expect(rosterFromEnv({ ...ENV, JARVIS_OWNER_EMAIL: "boss@team.test" } as never).owner).toBe("boss@team.test");
-    expect(rosterFromEnv({} as never)).toEqual({ owner: null, members: [] });
+describe("no login: visitors", () => {
+  it("every visitor id is random, well formed, and maps to a full-access visitor", () => {
+    const a = newVisitorId(), b = newVisitorId();
+    expect(a).toMatch(/^[a-f0-9]{24}$/); expect(a).not.toBe(b);
+    expect(visitorFrom(`${VISITOR_COOKIE}=${a}`)).toEqual({ email: `visitor-${a}`, role: "owner" });
   });
-  it("an address not on the roster has no role; matching ignores case", () => {
-    const r = rosterFromEnv(ENV);
-    expect(roleOf("OWNER@team.test", r)).toBe("owner");
-    expect(roleOf("a@team.test", r)).toBe("member");
-    expect(roleOf("stranger@x.test", r)).toBeNull();
-  });
-});
-
-describe("tokens and sessions", () => {
-  it("round-trips a session and derives the role from the roster, not the cookie", () => {
-    const c = `${SESSION_COOKIE}=${sessionToken("a@team.test", SECRET, NOW.getTime())}`;
-    expect(sessionFrom(c, ENV, NOW.getTime())).toEqual({ email: "a@team.test", role: "member" });
-    // the same cookie stops working the moment the person leaves the roster
-    expect(sessionFrom(c, { ...ENV, JARVIS_TEAM_EMAILS: "" } as never, NOW.getTime())).toBeNull();
-  });
-  it("rejects tampering, a wrong secret, an expired token, the wrong kind, and a missing or short secret", () => {
-    const t = sessionToken("a@team.test", SECRET, NOW.getTime());
-    const [body, sig] = t.split(".");
-    const forged = Buffer.from(JSON.stringify({ k: "s", e: "owner@team.test", x: 9999999999 })).toString("base64url");
-    expect(verify(`${forged}.${sig}`, SECRET, "s", NOW.getTime())).toBeNull();
-    expect(verify(`${body}.${sig}x`, SECRET, "s", NOW.getTime())).toBeNull();
-    expect(verify(t, "another-secret-another-secret", "s", NOW.getTime())).toBeNull();
-    expect(verify(t, SECRET, "s", NOW.getTime() + 8 * 24 * 3600_000)).toBeNull();
-    expect(verify(t, SECRET, "x" as never, NOW.getTime())).toBeNull(); // only the session kind exists
-    expect(verify(t, undefined, "s", NOW.getTime())).toBeNull();
-    expect(verify(t, "short", "s", NOW.getTime())).toBeNull();
-    expect(verify("garbage", SECRET, "s", NOW.getTime())).toBeNull();
-    expect(sessionFrom(`${SESSION_COOKIE}=${sign({ k: "s", e: "x@x.test", x: 9999999999 }, SECRET)}`, ENV, NOW.getTime())).toBeNull(); // signed but not on the roster
+  it("a missing, malformed or hostile cookie is no visitor (a fresh id is issued on the next write)", () => {
+    for (const c of ["", "x=1", `${VISITOR_COOKIE}=nope`, `${VISITOR_COOKIE}=${"g".repeat(24)}`, `${VISITOR_COOKIE}=${"a".repeat(25)}`, `${VISITOR_COOKIE}=../../etc`]) expect(visitorFrom(c)).toBeNull();
+    expect(visitorFrom(null)).toBeNull();
   });
   it("reads only the named cookie", () => {
-    expect(cookieValue("x=1; jarvis_session=abc; y=2")).toBe("abc");
-    expect(cookieValue("xjarvis_session=abc")).toBeNull();
+    expect(cookieValue("x=1; jarvis_visitor=abc; y=2")).toBe("abc");
+    expect(cookieValue("xjarvis_visitor=abc")).toBeNull();
     expect(cookieValue(null)).toBeNull();
   });
-  it("same-origin checks demand an Origin that matches, and JSON for API writes", () => {
+  it("the visitor cookie is httpOnly, SameSite=Lax and Secure on https", () => {
+    const c = visitorCookie("a".repeat(24), true);
+    expect(c).toMatch(/HttpOnly/); expect(c).toMatch(/SameSite=Lax/); expect(c).toMatch(/Secure/);
+    expect(visitorCookie("a".repeat(24), false)).not.toMatch(/Secure/);
+  });
+  it("writes still demand same-origin JSON, so another website cannot drive a visitor's browser", () => {
     const mk = (origin: string | null, ct = "application/json") => new Request("https://app.test/api/x", { method: "POST", headers: { ...(origin ? { origin } : {}), "content-type": ct } });
     expect(sameOriginJson(mk("https://app.test"), ENV)).toBe(true);
     expect(sameOriginJson(mk("https://evil.test"), ENV)).toBe(false);
     expect(sameOriginJson(mk(null), ENV)).toBe(false);
     expect(sameOriginJson(mk("https://app.test", "text/plain"), ENV)).toBe(false);
     expect(sameOriginJson(mk("https://app.test", "application/x-www-form-urlencoded"), ENV)).toBe(false);
-    expect(sameOrigin(mk("https://app.test", "application/x-www-form-urlencoded"), ENV)).toBe(true);
-    expect(sameOrigin(mk("https://evil.test"), ENV)).toBe(false);
-  });
-});
-
-describe("passcode sign-in (no email is sent)", () => {
-  const cookieOf = async (t: ReturnType<typeof memoryTeamStore>, email: string, pass: string, env = ENV) => { const r = await login(t.store, email, pass, env, NOW); return r; };
-  it("the owner signs in with the owner passcode, a member with the team passcode; the role comes from the roster", async () => {
-    const t = memoryTeamStore();
-    const o = await cookieOf(t, "Owner@Team.test", "owner-pass-phrase-123");
-    const m = await cookieOf(t, "a@team.test", "team-pass-phrase-456");
-    expect(o.status).toBe(200); expect(m.status).toBe(200);
-    expect(sessionFrom(`${SESSION_COOKIE}=${o.cookie}`, ENV, NOW.getTime())).toEqual({ email: "owner@team.test", role: "owner" });
-    expect(sessionFrom(`${SESSION_COOKIE}=${m.cookie}`, ENV, NOW.getTime())).toEqual({ email: "a@team.test", role: "member" });
-  });
-  it("the team passcode never makes anyone an owner, and the owner passcode does not work for a member's address", async () => {
-    const t = memoryTeamStore();
-    expect((await cookieOf(t, "owner@team.test", "team-pass-phrase-456")).status).toBe(401);
-    expect((await cookieOf(t, "a@team.test", "owner-pass-phrase-123")).status).toBe(401);
-  });
-  it("every refusal is the same message: a stranger, a wrong passcode and a right passcode on the wrong address are indistinguishable", async () => {
-    const t = memoryTeamStore();
-    const a = await cookieOf(t, "stranger@x.test", "team-pass-phrase-456");
-    const b = await cookieOf(t, "a@team.test", "wrong-wrong-wrong");
-    expect(a).toEqual({ status: 401, message: REFUSED }); expect(b).toEqual(a);
-    expect(a.cookie).toBeUndefined();
-  });
-  it("wrong attempts are bounded per address, and a correct passcode is refused while locked out", async () => {
-    const t = memoryTeamStore();
-    for (let i = 0; i < 5; i++) expect((await cookieOf(t, "a@team.test", `nope-nope-nope-${i}`)).status).toBe(401);
-    expect((await cookieOf(t, "a@team.test", "team-pass-phrase-456")).status).toBe(429);
-    expect((await cookieOf(t, "b@team.test", "team-pass-phrase-456")).status).toBe(200); // another address is unaffected
-  });
-  it("validates input and is off (503) unless a session secret and an owner passcode are configured", async () => {
-    const t = memoryTeamStore();
-    expect((await cookieOf(t, "nope", "x")).status).toBe(400);
-    expect((await cookieOf(t, "a@team.test", "")).status).toBe(400);
-    expect((await cookieOf(t, "a@team.test", 5 as never)).status).toBe(400);
-    expect((await cookieOf(t, "a@team.test", "x", { ...ENV, SESSION_SECRET: "" } as never)).status).toBe(503);
-    expect((await cookieOf(t, "owner@team.test", "short", { ...ENV, OWNER_PASSCODE: "short" } as never)).status).toBe(503);
-  });
-  it("a missing TEAM_PASSCODE means members cannot sign in, the owner still can", async () => {
-    const t = memoryTeamStore(); const env = { ...ENV, TEAM_PASSCODE: undefined } as never;
-    expect((await cookieOf(t, "a@team.test", "anything-anything", env)).status).toBe(401);
-    expect((await cookieOf(t, "owner@team.test", "owner-pass-phrase-123", env)).status).toBe(200);
-  });
-  it("a store failure is a clean 503, never a sign-in", async () => {
-    const t = memoryTeamStore(); t.store.countTokens = async () => { throw new Error("db down"); };
-    expect(await login(t.store, "a@team.test", "team-pass-phrase-456", ENV, NOW)).toMatchObject({ status: 503 });
-  });
-  it("passcode comparison is exact and ignores nothing", () => {
-    expect(passcodeMatches("abcdefghijkl", "abcdefghijkl")).toBe(true);
-    expect(passcodeMatches("abcdefghijkL", "abcdefghijkl")).toBe(false);
-    expect(passcodeMatches("abcdefghijkl ", "abcdefghijkl")).toBe(false);
-    expect(passcodeMatches("anything", undefined)).toBe(false);
-    expect(passcodeMatches("short", "short")).toBe(false); // too short counts as not configured
-    expect(passcodeMatches(undefined, "abcdefghijkl")).toBe(false);
   });
 });
 

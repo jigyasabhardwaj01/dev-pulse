@@ -9,7 +9,7 @@ export const NAV: NavItem[] = [
   { href: "/posts", label: "Evidence Explorer", short: "Evidence", icon: "evidence", blurb: "The posts behind each count", match: (p) => p.startsWith("/posts") },
   { href: "/history", label: "History", short: "History", icon: "history", blurb: "Week-over-week movement", match: (p) => p.startsWith("/history") },
   { href: "/watchlist", label: "Watchlist", short: "Watchlist", icon: "watch", blurb: "What JARVIS monitors and how strictly", match: (p) => p.startsWith("/watchlist") },
-  { href: "/review", label: "Team Review", short: "Review", icon: "review", blurb: "Shortlist, vote and decide", match: (p) => p.startsWith("/review") || p.startsWith("/signin") },
+  { href: "/review", label: "Team Review", short: "Review", icon: "review", blurb: "Shortlist, vote and decide", match: (p) => p.startsWith("/review") },
   { href: "/pack", label: "Monday Pack", short: "Pack", icon: "pack", blurb: "Sprint pack from decided work", match: (p) => p.startsWith("/pack") },
   { href: "/status", label: "Pipeline Health", short: "Pipeline", icon: "pipeline", blurb: "Collection status, read-only", match: (p) => p.startsWith("/status") },
 ];

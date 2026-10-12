@@ -8,7 +8,7 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
   const s = {
     terms: [...(seed.terms ?? [])] as WatchTerm[], sensitivity: "balanced" as Sensitivity, changes: [] as WatchChange[], items: [] as ReviewItem[], votes: [] as Vote[],
     decisions: [] as Decision[], events: [] as ReviewEvent[], packs: [] as PackRow[], derived: [] as DerivedAnalysis[], alerts: [] as { key: string; kind: string; at: Date }[],
-    tokens: new Map<string, { email: string; expires: Date; used: boolean; created: Date }>(), matched: [] as { topic_id: string; matched_terms: string[] | null }[],
+    matched: [] as { topic_id: string; matched_terms: string[] | null }[],
   };
   const iso = () => new Date().toISOString();
   const store: TeamStore = {
@@ -70,9 +70,6 @@ export function memoryTeamStore(seed: { terms?: WatchTerm[] } = {}) {
     async releaseAlert(key) { s.alerts = s.alerts.filter((a) => a.key !== key); },
     async countAlerts(kind, since) { return s.alerts.filter((a) => a.kind === kind && a.at >= since).length; },
 
-    async createToken(nonce, email, expires) { s.tokens.set(nonce, { email, expires, used: false, created: new Date(expires.getTime() - 15 * 60_000) }); },
-    async consumeToken(nonce, now) { const t = s.tokens.get(nonce); if (!t || t.used || t.expires <= now) return null; t.used = true; return t.email; },
-    async countTokens(email, since) { return [...s.tokens.values()].filter((t) => t.email === email && t.created >= since).length; },
   };
   return { store, state: s };
 }

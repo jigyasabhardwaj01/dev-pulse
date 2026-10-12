@@ -5,8 +5,8 @@ import type { Session } from "./auth";
 import type { EvidenceLink } from "./analysis";
 
 /*
- * The review workflow. Every function takes the SERVER-resolved session (from the signed cookie and the roster) and checks the
- * role itself: nothing the browser sends can grant a role or choose who is acting. Votes are advice; an owner decision is a
+ * The review workflow. Every function takes the SERVER-resolved session (the visitor id cookie) and checks the
+ * role itself. There is no login, so every visitor has full access; nothing the browser sends can choose who is acting. Votes are advice; an owner decision is a
  * separate record that is never computed from the tally, and the tally at the time is stored beside it so both stay auditable.
  */
 export type Result<T> = ({ ok: true } & T) | { ok: false; status: number; error: string };

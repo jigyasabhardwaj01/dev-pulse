@@ -30,16 +30,6 @@ describe("team store query shapes", () => {
     expect(rpcs).toEqual([{ fn: "record_review_decision", args: { p_item: "i", p_outcome: "parked", p_by: "o@x.test", p_rationale: "r", p_evidence: { a: 1 }, p_votes: { prioritise: 1, park: 0, total: 1 }, p_followup: true } }]);
     expect(log).toHaveLength(0);
   });
-  it("a token is consumed with ONE conditional update (unused AND unexpired), so a replay or race matches nothing", async () => {
-    const { store, log } = fake(() => ok([{ email: "a@x.test" }]));
-    const now = new Date("2026-10-16T05:00:00Z");
-    expect(await store.consumeToken("n1", now)).toBe("a@x.test");
-    const c = log[0].calls;
-    expect(has(c, "eq", "nonce", "n1")).toBe(true);
-    expect(has(c, "is", "used_at", null)).toBe(true);
-    expect(has(c, "gt", "expires_at", now.toISOString())).toBe(true);
-    expect(await fake(() => ok([])).store.consumeToken("n1", now)).toBeNull();
-  });
   it("a duplicate alert key is reported as a duplicate, other errors are thrown", async () => {
     expect(await fake(() => ({ data: null, error: { message: "dup", code: "23505" } })).store.claimAlert("k", "run_failed", null)).toBe(false);
     expect(await fake(() => ok(null)).store.claimAlert("k", "run_failed", null)).toBe(true);

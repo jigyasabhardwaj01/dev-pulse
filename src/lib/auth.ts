@@ -1,67 +1,23 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 /*
- * Sign-in for the review workflow. No email is sent and there is no accounts table: a person is whoever the ROSTER (server
- * environment) names, and proves it with the passcode for their role (OWNER_PASSCODE for the owner, TEAM_PASSCODE for members),
- * both held only in the server environment. The browser then holds an HMAC-signed, httpOnly session cookie that carries only
- * the email and an expiry. The ROLE is never stored in the cookie and never sent by
- * the client: it is derived from the roster on every request, so removing someone from the roster takes effect immediately.
+ * JARVIS has no login. Everyone who can open the site can read AND use the review tools (watchlist, shortlist, votes, decisions,
+ * Monday pack). Nothing secret protects them: there are no passcodes, no roster and no sessions.
+ *
+ * What remains is bookkeeping, not security:
+ *  - a random per-browser visitor id (cookie), so "one vote per person" and "who recorded this" still mean something. It is
+ *    anonymous, can be cleared or changed by the visitor, and proves nothing about who they are;
+ *  - a same-origin + JSON check on every write, so another website cannot make a visitor's browser submit changes (CSRF).
  */
 export type Role = "owner" | "member";
-export interface Roster { owner: string | null; members: string[] }
 export interface Session { email: string; role: Role }
 
-export const SESSION_COOKIE = "jarvis_session";
-export const SESSION_TTL_S = 7 * 24 * 3600;
-export const ATTEMPTS_PER_WINDOW = 5;
-export const ATTEMPT_WINDOW_MS = 15 * 60_000;
-export const MIN_PASSCODE = 12;
+export const VISITOR_COOKIE = "jarvis_visitor";
+const VISITOR_ID = /^[a-f0-9]{24}$/;
 
-const normEmail = (s: string) => s.trim().toLowerCase();
-const EMAIL = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/;
-export const isEmail = (s: unknown): s is string => typeof s === "string" && s.length <= 254 && EMAIL.test(s.trim());
+export const newVisitorId = () => randomBytes(12).toString("hex");
 
-/** The owner is JARVIS_OWNER_EMAIL, else the approved report recipient. Team members come from JARVIS_TEAM_EMAILS (comma separated). */
-export function rosterFromEnv(env: NodeJS.ProcessEnv = process.env): Roster {
-  const ownerRaw = env.JARVIS_OWNER_EMAIL || env.DIGEST_TO_EMAIL || "";
-  const owner = isEmail(ownerRaw) ? normEmail(ownerRaw) : null;
-  const members = (env.JARVIS_TEAM_EMAILS ?? "").split(",").map(normEmail).filter((e) => isEmail(e) && e !== owner);
-  return { owner, members: [...new Set(members)] };
-}
-
-export function roleOf(email: string, roster: Roster): Role | null {
-  const e = normEmail(email);
-  if (roster.owner && e === roster.owner) return "owner";
-  return roster.members.includes(e) ? "member" : null;
-}
-
-// ---------------------------------------------------------------------------------------------------------------------------
-type Payload = { k: "s"; e: string; x: number };
-const b64 = (b: Buffer | string) => Buffer.from(b).toString("base64url");
-const mac = (body: string, secret: string) => createHmac("sha256", secret).update(body).digest();
-
-export function sign(p: Payload, secret: string): string {
-  const body = b64(JSON.stringify(p));
-  return `${body}.${b64(mac(body, secret))}`;
-}
-export function verify(token: unknown, secret: string | undefined, kind: Payload["k"], nowMs: number): Payload | null {
-  if (!secret || secret.length < 16 || typeof token !== "string" || token.length > 2000) return null;
-  const [body, sig, extra] = token.split(".");
-  if (!body || !sig || extra !== undefined) return null;
-  const want = mac(body, secret);
-  let got: Buffer;
-  try { got = Buffer.from(sig, "base64url"); } catch { return null; }
-  if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
-  try {
-    const p = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Payload;
-    if (p.k !== kind || typeof p.e !== "string" || typeof p.x !== "number" || p.x * 1000 <= nowMs) return null;
-    return p;
-  } catch { return null; }
-}
-
-export const sessionToken = (email: string, secret: string, nowMs: number) => sign({ k: "s", e: normEmail(email), x: Math.floor(nowMs / 1000) + SESSION_TTL_S }, secret);
-
-export function cookieValue(header: string | null | undefined, name = SESSION_COOKIE): string | null {
+export function cookieValue(header: string | null | undefined, name = VISITOR_COOKIE): string | null {
   for (const part of (header ?? "").split(";")) {
     const i = part.indexOf("=");
     if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
@@ -69,23 +25,14 @@ export function cookieValue(header: string | null | undefined, name = SESSION_CO
   return null;
 }
 
-/** The signed-in person for a request, or null. Role comes from the roster NOW, not from anything the client sent. */
-export function sessionFrom(cookieHeader: string | null | undefined, env: NodeJS.ProcessEnv = process.env, nowMs = Date.now()): Session | null {
-  const p = verify(cookieValue(cookieHeader), env.SESSION_SECRET, "s", nowMs);
-  if (!p) return null;
-  const role = roleOf(p.e, rosterFromEnv(env));
-  return role ? { email: normEmail(p.e), role } : null;
+/** The visitor behind a request, from their id cookie. Every visitor may use every tool, so the role is always "owner". */
+export function visitorFrom(cookieHeader: string | null | undefined, id: string | null = cookieValue(cookieHeader)): Session | null {
+  return id && VISITOR_ID.test(id) ? { email: `visitor-${id}`, role: "owner" } : null;
 }
 
-export function sessionCookie(token: string, secure: boolean): string {
-  return `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}${secure ? "; Secure" : ""}`;
-}
-export const clearCookie = (secure: boolean) => `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? "; Secure" : ""}`;
+export const visitorCookie = (id: string, secure: boolean) => `${VISITOR_COOKIE}=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${365 * 24 * 3600}${secure ? "; Secure" : ""}`;
 
-/**
- * CSRF defence for every state-changing request: the browser must say the request comes from this site (Origin header equal to the
- * request's own origin or the configured APP_URL) AND send JSON (which a cross-site form cannot do without a CORS preflight).
- */
+/** CSRF defence for every write: the browser must say the request comes from this site (Origin) AND send JSON (needs a CORS preflight cross-site). */
 export function sameOriginJson(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return false;
@@ -93,20 +40,4 @@ export function sameOriginJson(req: Request, env: NodeJS.ProcessEnv = process.en
   if (env.APP_URL) { try { allowed.add(new URL(env.APP_URL).origin); } catch { /* ignore a malformed APP_URL */ } }
   if (!allowed.has(origin)) return false;
   return (req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json");
-}
-/** Same origin check for the sign-in confirmation form (a browser form post, not JSON). */
-export function sameOrigin(req: Request, env: NodeJS.ProcessEnv = process.env): boolean {
-  const origin = req.headers.get("origin");
-  if (!origin) return false;
-  const allowed = new Set([new URL(req.url).origin]);
-  if (env.APP_URL) { try { allowed.add(new URL(env.APP_URL).origin); } catch { /* ignore */ } }
-  return allowed.has(origin);
-}
-
-/** Constant-time passcode comparison. A passcode shorter than MIN_PASSCODE is treated as not configured (sign-in stays off). */
-export function passcodeMatches(given: unknown, expected: string | undefined): boolean {
-  if (typeof given !== "string" || !expected || expected.length < MIN_PASSCODE) return false;
-  const a = createHmac("sha256", "jarvis-passcode").update(given).digest();
-  const b = createHmac("sha256", "jarvis-passcode").update(expected).digest();
-  return timingSafeEqual(a, b);
 }

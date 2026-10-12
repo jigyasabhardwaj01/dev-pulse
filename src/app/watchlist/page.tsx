@@ -38,20 +38,18 @@ function Term({ t, canEdit, kind }: { t: TermView; canEdit: boolean; kind: "incl
 }
 
 export default async function Watchlist() {
-  const session = await currentSession();
-  const canEdit = session?.role === "owner";
+  await currentSession();
+  const canEdit = true; // no login: every visitor may edit
   let view;
   try { view = await loadWatchlist(); } catch { view = null; }
   if (!view) return <EmptyState title="We couldn't load the watchlist" body="The database didn't answer. Nothing was changed. Reload in a moment." action={{ href: "/watchlist", label: "Reload" }} />;
   return (
     <>
       <header className="page-head">
-        <p className="eyebrow">Configuration{canEdit ? " · owner" : " · read-only"}</p>
+        <p className="eyebrow">Configuration · open to everyone</p>
         <h1>Watchlist</h1>
         <p className="lede">What JARVIS searches for, what it deliberately ignores, and how strict it is. A change applies from the next run; reports already saved keep the configuration they were built with.</p>
         <div className="chips-row">
-          {!session && <a className="btn" href="/signin">Sign in to edit</a>}
-          {session && !canEdit && <span className="muted small">Signed in as {session.email}. Only the owner can edit.</span>}
         </div>
       </header>
 
@@ -85,7 +83,7 @@ export default async function Watchlist() {
         {view.changes.length === 0 ? <p className="muted">No changes have been made through this page yet.</p> : (
           <ul className="history-list card card-pad">
             {view.changes.map((c) => (
-              <li key={c.id}><span className="num muted">{formatDateTime(c.at)}</span> · {session ? c.actor : "owner"} · <strong>{c.action}</strong> {c.subject}</li>
+              <li key={c.id}><span className="num muted">{formatDateTime(c.at)}</span> · <strong>{c.action}</strong> {c.subject}</li>
             ))}
           </ul>
         )}

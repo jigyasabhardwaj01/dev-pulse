@@ -19,7 +19,7 @@ export function useAction() {
       const res = await fetch(url, { method, headers: { "content-type": "application/json" }, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
       const data = (await res.json().catch(() => ({}))) as { error?: string; warnings?: string[] };
       if (!res.ok) {
-        setNotice({ kind: "error", text: res.status === 401 ? "Your session has ended. Sign in again." : data.error ?? "That did not work. Nothing was changed." });
+        setNotice({ kind: "error", text: data.error ?? "That did not work. Nothing was changed." });
         return false;
       }
       setNotice({ kind: "ok", text: okText, warnings: data.warnings?.length ? data.warnings : undefined });

@@ -55,20 +55,18 @@ function Card({ c, role, email }: { c: ReviewCard; role: "owner" | "member"; ema
 
 export default async function Review() {
   const session = await currentSession();
-  if (!session) return <EmptyState title="Sign in to review" body="Shortlists, votes and decisions are for the named team. Reports and evidence stay open to read." action={{ href: "/signin", label: "Sign in" }} />;
   let cards: ReviewCard[] | null;
   try { cards = await loadReview(session); } catch { cards = null; }
   if (!cards) return <EmptyState title="We couldn't load the review list" body="The database didn't answer. Nothing was changed. Reload in a moment." action={{ href: "/review", label: "Reload" }} />;
   return (
     <>
       <header className="page-head">
-        <p className="eyebrow">Team · signed in as {session.email} ({session.role})</p>
+        <p className="eyebrow">Team review · open to everyone</p>
         <h1>Review &amp; Decisions</h1>
-        <p className="lede">Anyone on the team can shortlist a pain point from a report, with a reason. The owner opens voting and records the final decision. Votes inform the owner; they never decide. Every step is recorded.</p>
+        <p className="lede">Anyone can shortlist a pain point from a report, with a reason, open voting, vote and record the final decision. Votes are advice; a decision is a separate record with a written rationale. Every step is recorded, without names: each browser has an anonymous id, so there is no sign-in.</p>
         <div className="chips-row">
           <Link className="btn" href="/reports">Shortlist from a report</Link>
           <Link className="btn" href="/pack">Monday pack</Link>
-          <form method="post" action="/api/auth/signout"><button className="btn" type="submit">Sign out</button></form>
         </div>
       </header>
       {cards.length === 0 && <EmptyState title="Nothing shortlisted yet" body="Open a weekly report and use Shortlist on a pain point worth the team's time." action={{ href: "/reports", label: "Open reports" }} />}
