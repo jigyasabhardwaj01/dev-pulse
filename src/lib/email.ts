@@ -140,3 +140,34 @@ export async function sendBriefEmail(
   try { messageId = ((await res.json()) as { id?: string }).id ?? null; } catch { /* the message was accepted either way */ }
   return { status: "sent", messageId };
 }
+
+/**
+ * A clearly labelled REHEARSAL copy of the latest saved brief, to the configured recipient only. It is for checking that the inbox
+ * path works. It never touches the saved report or its delivery state, never uses the real idempotency key (so it can neither be
+ * mistaken for, nor block, the real Friday send), and is only reachable from a script: there is no route that calls it.
+ */
+export async function sendRehearsalEmail(
+  args: { brief: FridayBrief; nonce: string },
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: FetchLike = fetch,
+): Promise<"skipped" | { status: "sent"; messageId: string | null }> {
+  const key = env.RESEND_API_KEY;
+  const to = env.DIGEST_TO_EMAIL;
+  if (!key || !to) return "skipped";
+  const banner = `<div style="font-family:system-ui,sans-serif;max-width:620px;background:#fff4d6;border:1px solid #e0b84c;padding:10px 14px;margin-bottom:14px;border-radius:6px"><strong>Rehearsal.</strong> This is a practice copy of the saved report for ${esc(args.brief.periodLabel)}, sent to check that email reaches your inbox. The real weekly email is separate and was not changed.</div>`;
+  let res: Response;
+  try {
+    res = await fetchImpl("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "idempotency-key": `jarvis-rehearsal-${args.brief.weekStart}-${args.nonce}` },
+      body: JSON.stringify({ from: "JARVIS <onboarding@resend.dev>", to: [to], subject: `[Rehearsal] JARVIS: developer pain points, week of ${args.brief.weekStart}`, html: banner + renderFridayHtml(args.brief, dashboardUrl(env)) }),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw new EmailSendError(`resend request failed before a response (${(e as Error)?.name ?? "error"})`, false);
+  }
+  if (!res.ok) throw new EmailSendError(`resend http ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`, res.status >= 400 && res.status < 500 && res.status !== 409);
+  let messageId: string | null = null;
+  try { messageId = ((await res.json()) as { id?: string }).id ?? null; } catch { /* accepted either way */ }
+  return { status: "sent", messageId };
+}
