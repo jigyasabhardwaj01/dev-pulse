@@ -5,14 +5,14 @@ import { Icon } from "./Icons";
 
 const KEY = "jarvis-theme";
 
-/** Dark is the default. The choice is remembered in this browser only; if storage is unavailable the toggle still works for the visit. */
+/** Light ("paper") is the default. The choice is remembered in this browser only; if storage is unavailable the toggle still works for the visit. */
 export default function ThemeToggle({ withLabel = false }: { withLabel?: boolean }) {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  useEffect(() => { setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark"); }, []);
+  const [theme, setTheme] = useState<"dark" | "light">("light");
+  useEffect(() => { setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light"); }, []);
   const flip = () => {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
-    if (next === "light") document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
+    if (next === "dark") document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
     try { localStorage.setItem(KEY, next); } catch { /* private mode or blocked storage: keep the in-page choice only */ }
   };
   const to = theme === "dark" ? "light" : "dark";
@@ -24,13 +24,13 @@ export default function ThemeToggle({ withLabel = false }: { withLabel?: boolean
   );
 }
 
-/** Re-applies a saved light theme after hydration. Needed on pages Next renders through its error shell (a thrown notFound()), which replaces <html> after the boot script ran. */
+/** Re-applies a saved dark theme after hydration. Needed on pages Next renders through its error shell (a thrown notFound()), which replaces <html> after the boot script ran. */
 export function ThemeSync() {
   useEffect(() => {
-    try { if (localStorage.getItem(KEY) === "light") document.documentElement.dataset.theme = "light"; } catch { /* storage unavailable: stay on the default */ }
+    try { if (localStorage.getItem(KEY) === "dark") document.documentElement.dataset.theme = "dark"; } catch { /* storage unavailable: stay on the default */ }
   }, []);
   return null;
 }
 
-/** Runs before first paint (inlined in <head>) so a saved light theme does not flash dark. */
-export const THEME_BOOT = `try{if(localStorage.getItem("${KEY}")==="light")document.documentElement.dataset.theme="light"}catch(e){}`;
+/** Runs before first paint (inlined in <head>) so a saved dark theme does not flash light. */
+export const THEME_BOOT = `try{if(localStorage.getItem("${KEY}")==="dark")document.documentElement.dataset.theme="dark"}catch(e){}`;

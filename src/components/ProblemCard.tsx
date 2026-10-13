@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { problemHref, type ProblemView } from "@/lib/insights-view";
 import { sourceName } from "@/lib/insights-view";
+import ProblemTile, { TILE_KINDS } from "./motion/ProblemTile";
 
 const TREND_TONE = { increasing: "warn", decreasing: "ok", steady: "neutral", new: "info", unknown: "neutral" } as const;
 const CONF_TONE = { high: "ok", medium: "info", low: "neutral" } as const;
@@ -24,13 +25,15 @@ export function EvidenceList({ links, max = 2 }: { links: ProblemView["evidence"
 export default function ProblemCard({ p, headingLevel = 2 }: { p: ProblemView; headingLevel?: 2 | 3 }) {
   const H = headingLevel === 2 ? "h2" : "h3";
   return (
-    <li className="card problem" aria-label={p.theme}>
+    <li className="card problem tilt" aria-label={p.theme}>
       <div className="problem-head">
         <span className={`rank${p.rank ? "" : " plain"}`} aria-label={p.rank ? `Number ${p.rank}` : "Not ranked"}>{p.rank ?? "–"}</span>
         <div className="stack" style={{ gap: 4 }}>
           <H>{p.theme}</H>
           <p className="cat">{p.category}{!p.supported && " · early signal, not ranked"}</p>
+          <span className="ascii-meter" aria-hidden="true">{"█".repeat(Math.min(12, p.discussions))}<span className="off">{"░".repeat(Math.max(0, 12 - Math.min(12, p.discussions)))}</span> {p.discussions}</span>
         </div>
+        <ProblemTile label={p.theme} size="sm" index={(p.rank ?? 1) - 1} kind={p.rank ? TILE_KINDS[(p.rank - 1) % TILE_KINDS.length] : undefined} />
       </div>
       <p>{p.whyItMatters}</p>
       <dl className="facts">

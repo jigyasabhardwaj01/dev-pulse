@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import ActionBar from "@/components/ActionBar";
+import CutLine from "@/components/motion/CutLine";
+import Equation from "@/components/motion/Equation";
+import WeekScrubber from "@/components/motion/WeekScrubber";
+import Wireframe from "@/components/motion/Wireframe";
+import Wordmark from "@/components/motion/Wordmark";
+import ProblemTile from "@/components/motion/ProblemTile";
+import Count from "@/components/motion/Count";
 import EmptyState from "@/components/EmptyState";
 import ProblemCard from "@/components/ProblemCard";
 import FridayCard from "@/components/FridayCard";
@@ -15,7 +22,7 @@ import { readSchedule } from "@/lib/schedule";
 import { aiStatus, collectionStatus } from "@/lib/status-plain";
 import vercelConfig from "../../vercel.json";
 import { requireKnownWeek } from "@/lib/page-guard";
-import { formatDateTime } from "@/lib/view";
+import { formatDateTime, istPeriodFromKey } from "@/lib/view";
 
 export const metadata: Metadata = { title: "Insights" };
 export const dynamic = "force-dynamic";
@@ -44,29 +51,47 @@ export default async function Insights({ searchParams }: { searchParams: Promise
     setup: { schedule: readSchedule(vercelConfig), aiKey: Boolean(env.OPENROUTER_API_KEY), emailKey: Boolean(env.RESEND_API_KEY), recipient: env.DIGEST_TO_EMAIL ?? null, cronSecret: Boolean(env.CRON_SECRET) },
   });
   const growing = d.all.filter((p) => p.trend.kind === "increasing" || p.trend.kind === "new").slice(0, 5);
+  const scrubSource = supported.length ? supported : d.all.slice(0, 5);
+  const scrub = scrubSource.slice(0, 5).map((p) => ({ key: p.key, theme: p.theme, href: problemHref(p), firstSeen: p.firstSeen, lastSeen: p.lastSeen, discussions: p.discussions }));
   const checkedAt = run ? `Last checked ${formatDateTime(run.finishedAt ?? run.startedAt)}.` : undefined;
   return (
     <>
       {actions}
-      <header className="hero">
-        <p className="eyebrow">This week · {report.periodLabel}</p>
-        <h1>What developers are struggling with</h1>
+      <Wordmark />
+      <header className="home-hero">
+        <div className="hero-copy">
+          <p className="eyebrow">This week · {report.periodLabel}</p>
+          <h1>What developers are struggling with <em>right now</em></h1>
+          <div className="hero-meta">
+            <span><b><Count n={d.all.reduce((n, p) => n + p.discussions, 0)} /></b> discussions read</span>
+            <span><b><Count n={d.all.length} /></b> recurring problems</span>
+            <span><b><Count n={supported.length} /></b> with enough evidence to rank</span>
+          </div>
+        </div>
+        <div className="hero-art">
+          <Wireframe shape="globe" nodes={Math.min(60, Math.max(8, d.all.reduce((n, p) => n + p.discussions, 0)))} />
+          <span className="orbit-label" style={{ left: "2%", top: "18%" }}>Hacker News</span>
+          <span className="orbit-label" style={{ right: "0%", top: "44%" }}>Stack Overflow</span>
+          <span className="orbit-label" style={{ left: "14%", bottom: "8%" }}>GitHub</span>
+        </div>
       </header>
-
-      <StatusStrip items={[
-        { k: "New discussions", s: collectionStatus(run), when: checkedAt },
-        { k: "AI analysis", s: aiStatus(run, report) },
-      ]} />
-      <FridayCard s={friday} />
-      {!d.runKnown && <p className="alert warn" role="status"><span>Run history could not be read, so freshness and AI status are unknown right now.</span></p>}
+      <Equation />
 
       {report.narrative && (
-        <section className="card summary" aria-labelledby="sum-h">
+        <section className="card summary tilt" aria-labelledby="sum-h">
           <h2 id="sum-h">In short</h2>
           <p>{report.narrative}</p>
           <p className="muted small">{report.usedFallback ? "Written from a standard template because the AI summary was not available. The numbers below are not affected." : "Written by AI from the saved numbers."}</p>
         </section>
       )}
+
+      <StatusStrip items={[
+        { k: "New discussions", s: collectionStatus(run), when: checkedAt },
+        { k: "AI analysis", s: aiStatus(run, report) },
+      ]} />
+      {!d.runKnown && <p className="alert warn" role="status"><span>Run history could not be read, so freshness and AI status are unknown right now.</span></p>}
+
+      {scrub.length > 0 && <WeekScrubber periodStart={istPeriodFromKey(report.weekStart).start.toISOString()} periodLabel={report.periodLabel} items={scrub} />}
 
       <section className="stack" aria-labelledby="top-h">
         <div className="section-head"><h2 id="top-h">Top problems this week</h2><p>{supported.length ? `${supported.length} with enough evidence to rank` : "None has enough evidence to rank yet"}</p></div>
@@ -83,7 +108,7 @@ export default async function Insights({ searchParams }: { searchParams: Promise
         <div className="section-head"><h2 id="up-h">Becoming more common</h2></div>
         {growing.length ? (
           <ul className="problems" style={{ gap: 10 }}>
-            {growing.map((p) => <li key={p.key} className="card card-pad" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}><span><strong>{p.theme}</strong><span className="muted small" style={{ display: "block" }}>{p.trend.detail}{p.supported ? "" : " Early signal."}</span></span><Link className="btn" href={problemHref(p)}>Look at the evidence<span className="sr-only">: {p.theme}</span></Link></li>)}
+            {growing.map((p) => <li key={p.key} className="card card-pad row-card tilt"><ProblemTile label={p.theme} size="sm" /><span className="row-main"><strong>{p.theme}</strong><span className="muted small" style={{ display: "block" }}>{p.trend.detail}{p.supported ? "" : " Early signal."}</span></span><Link className="btn" href={problemHref(p)}>Look at the evidence<span className="sr-only">: {p.theme}</span></Link></li>)}
           </ul>
         ) : (
           <div className="explain"><span>{d.all.some((p) => p.trend.kind !== "unknown") ? "No problem is clearly increasing this week." : "Not enough comparable data to say what is increasing. Last week's data is missing or was collected differently, so no rise or fall is claimed."}</span></div>
@@ -95,8 +120,9 @@ export default async function Insights({ searchParams }: { searchParams: Promise
           <div className="section-head"><h2 id="early-h">Early signals</h2><p>Not ranked: too little evidence so far</p></div>
           <ul className="problems" style={{ gap: 10 }}>
             {early.slice(0, 6).map((p) => (
-              <li key={p.key} className="card card-pad" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                <span><strong>{p.theme}</strong><span className="muted small" style={{ display: "block" }}>{p.category} · {p.discussions} {p.discussions === 1 ? "discussion" : "discussions"} · {p.confidence.label.toLowerCase()}</span></span>
+              <li key={p.key} className="card card-pad row-card tilt">
+                <ProblemTile label={p.theme} size="sm" />
+                <span className="row-main"><strong>{p.theme}</strong><span className="muted small" style={{ display: "block" }}>{p.category} · {p.discussions} {p.discussions === 1 ? "discussion" : "discussions"} · {p.confidence.label.toLowerCase()}</span></span>
                 <Link className="btn" href={problemHref(p)}>Look at the evidence<span className="sr-only">: {p.theme}</span></Link>
               </li>
             ))}
@@ -105,10 +131,13 @@ export default async function Insights({ searchParams }: { searchParams: Promise
         </section>
       )}
 
+      <CutLine label="Your Friday email" />
+      <FridayCard s={friday} />
+
       {d.limitations.length > 0 && (
         <details className="card card-pad">
           <summary>Things to keep in mind ({d.limitations.length})</summary>
-          <ul className="steps" style={{ marginTop: 10 }}>{d.limitations.map((l) => <li key={l}>{l}</li>)}</ul>
+          <ul className="limits">{d.limitations.map((l) => <li key={l}>{l}</li>)}</ul>
         </details>
       )}
     </>

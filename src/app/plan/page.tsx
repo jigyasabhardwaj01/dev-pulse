@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import PageArt from "@/components/motion/PageArt";
 import Link from "next/link";
 import EmptyState from "@/components/EmptyState";
 import PrintButton from "@/components/PrintButton";
@@ -36,6 +37,7 @@ export default async function Plan() {
   return (
     <>
       <header className="hero">
+        <PageArt shape="cube" />
         <p className="eyebrow">{plan.periodLabel ? `Based on the report for ${plan.periodLabel}` : "No report yet"}</p>
         <h1>Weekly action plan</h1>
         <p className="lede">The problems your team picked to look into, why they were picked, and what was decided. It updates as soon as a decision is recorded.</p>

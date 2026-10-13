@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import PageArt from "@/components/motion/PageArt";
 import Link from "next/link";
+import ProblemTile from "@/components/motion/ProblemTile";
 import EmptyState from "@/components/EmptyState";
 import { STATE_LABEL, STATE_TONE } from "@/lib/decision-labels";
 import { loadInsights } from "@/lib/insights-data";
@@ -12,9 +14,10 @@ export const dynamic = "force-dynamic";
 
 function Row({ p, state, mine }: { p: ProblemView; state: string | null; mine: boolean }) {
   return (
-    <li className="card card-pad" style={{ display: "grid", gap: 8 }}>
+    <li className="card card-pad explore-row tilt">
+      <ProblemTile label={p.theme} size="sm" />
       <div className="row-wrap" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div className="stack" style={{ gap: 2 }}>
+        <div className="stack" style={{ gap: 4 }}>
           <h3><Link href={problemHref(p)}>{p.theme}</Link></h3>
           <p className="muted small">{p.category} · {p.discussions} {p.discussions === 1 ? "discussion" : "discussions"} · {p.trend.label.toLowerCase()} · {p.confidence.label.toLowerCase()}</p>
         </div>
@@ -42,6 +45,7 @@ export default async function Explore() {
   return (
     <>
       <header className="hero">
+        <PageArt shape="torus" />
         <p className="eyebrow">{d.report.periodLabel}</p>
         <h1>Explore &amp; decide</h1>
         <p className="lede">Open a problem to read the discussions behind it. Then shortlist it and record what your team will do. <strong>JARVIS only suggests</strong> what to look at; a decision is always made by a person.</p>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import PageArt from "@/components/motion/PageArt";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import EmptyState from "@/components/EmptyState";
@@ -40,6 +41,7 @@ export default async function ProblemPage({ searchParams }: { searchParams: Prom
     <>
       <p className="small"><Link href="/explore">← All problems</Link></p>
       <header className="hero">
+        <PageArt shape="globe" />
         <p className="eyebrow">{p.category}</p>
         <h1 style={{ maxWidth: "32ch" }}>{p.theme}</h1>
         <p className="lede">{p.whyItMatters}</p>
