@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import PageArt from "@/components/motion/PageArt";
 import Link from "next/link";
 import EmptyState from "@/components/EmptyState";
 import { analysisFor } from "@/lib/analysis-source";
@@ -29,7 +30,8 @@ export default async function Compare({ searchParams }: { searchParams: Promise<
   return (
     <>
       <p className="small"><Link href="/explore">← All problems</Link></p>
-      <header className="hero"><h1>Compare problems</h1><p className="lede">Side by side, from the same report. These are JARVIS&rsquo;s numbers; the decision is yours.</p></header>
+      <header className="hero">
+        <PageArt shape="torus" /><h1>Compare problems</h1><p className="lede">Side by side, from the same report. These are JARVIS&rsquo;s numbers; the decision is yours.</p></header>
       <div className="card card-pad" style={{ overflowX: "auto" }}>
         <table className="cmp">
           <thead><tr><th scope="col"><span className="sr-only">Measure</span></th>{picked.map((p) => <th key={p.key} scope="col" style={{ width: "auto", textTransform: "none", letterSpacing: 0, fontSize: ".95rem", color: "var(--text)" }}><Link href={problemHref(p)}>{p.theme}</Link></th>)}</tr></thead>

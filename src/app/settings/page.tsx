@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import PageArt from "@/components/motion/PageArt";
 import Link from "next/link";
 import { getRecentRuns } from "@/lib/data";
 import { ago, scheduleText } from "@/lib/health";
@@ -33,6 +34,7 @@ export default async function Settings() {
   return (
     <>
       <header className="hero">
+        <PageArt shape="helix" />
         <p className="eyebrow">Behind the scenes</p>
         <h1>Settings &amp; diagnostics</h1>
         <p className="lede">Most people never need this page. It shows where the data comes from and keeps the technical details out of the way.</p>
